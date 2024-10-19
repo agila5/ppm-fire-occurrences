@@ -5,4 +5,12 @@
 _targets/
 _targets.yaml
 data/
-**/*.html 
+
+# Ignore all directories ending with _cache
+**/*_cache/
+
+# Ignore all directories ending with _files
+**/*_files/
+
+# Ignore .html files
+**/*.html

@@ -1,7 +1,7 @@
 # 0a. Setup ----------------------------------------------------------------
 list_packages <- function() {
   unique(c(
-    "here", "piggyback", "sf", "tidyverse", "cols4all", "spatstat", 
+    "here", "piggyback", "qs", "sf", "tidyverse", "cols4all", "spatstat", 
     "stars", "scales", "gdalUtilities", "grid", "stpp", "stopp", 
     "mgcv", "plot3D", "grDevices", "colorspace", "sparr", 
     "conflicted"
@@ -20,4 +20,23 @@ is_conflicted_last <- function(pkgs) {
 normalize <- function(x, max = 1) {
   x <- as.numeric(x)
   (x - min(x)) / (max(x) - min(x)) * max
+}
+
+# 0b. Bounding boxes for plots --------------------------------------------
+define_bb <- function(
+    xmin, 
+    ymin, 
+    xmax, 
+    ymax, 
+    crs
+) {
+  bbox <- st_bbox(
+    c(xmin = xmin, ymin = ymin, xmax = xmax, ymax = ymax), 
+    crs = crs
+  ) |> st_as_sfc()
+  
+  if (st_crs(bbox) == st_crs(3003)) {
+    return(bbox)
+  }
+  st_transform(bbox, 3003)
 }
