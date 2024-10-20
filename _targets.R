@@ -5,7 +5,7 @@ library(here)
 library(piggyback)
 
 # Run the R scripts in the R/ folder with your custom functions:
-tar_source()
+tar_source(here("R/functions.R"))
 tar_option_set(format = "qs", packages = list_packages()) # debug goes here
 tar_config_set(store = here("_targets"))
 

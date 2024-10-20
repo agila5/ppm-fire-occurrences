@@ -20,7 +20,7 @@ knitr::knit_hooks$set(crop = knitr::hook_pdfcrop)
 
 library(targets)
 tar_config_set(store = here::here("_targets"))
-tar_source(here::here("R"))
+tar_source(here::here("R/functions.R"))
 invisible(suppressPackageStartupMessages(
   sapply(tar_read(packages_names), library, character.only = TRUE)
 ))
