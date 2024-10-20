@@ -1,0 +1,61 @@
+---
+format: gfm
+---
+```{r}
+#| include: false
+library(targets)
+library(tarchetypes)
+invisible(suppressPackageStartupMessages({
+  library(here)
+  library(sessioninfo)
+  library(knitr)
+  library(quarto)
+  library(rmarkdown)
+  sapply(
+    X = tar_read(packages_names), 
+    FUN = library, 
+    character.only = TRUE
+  )
+}))
+
+options(width = 100)
+```
+
+## README
+
+This repository is associated with the paper *Non-separable spatio-temporal Poisson point process models for fire occurrences* by Nicoletta D'Angelo, Alessandro Albano, Andrea Gilardi, and Giada Adelfio. It contains the code and the data necessary to reproduce the analyses presented in the manuscript
+
+We used the `R` software and the following contributed packages: 
+
+```{r}
+#| echo: false
+session_info(pkgs = "attached", dependencies = FALSE)
+```
+
+**Please check that all necessary packages (especially `targets`, `tarchetypes`, and `piggyback`) are installed before going to the next section.**
+
+### Instructions
+
+The following steps are necessary to locally reproduce the results included in the manuscript. Please note that: 
+
+A. We decided to use the [`targets`](https://cran.r-project.org/package=targets) package to manage the workflow and the dependencies between the different steps of the analysis. Therefore, the code is contained in the `_targets.R` file and the results are summarised in the `results.html` file which will be created by `tar_make()` command inside the `reports` folder at the end of the workflow. You can check the `targets` package [documentation](https://books.ropensci.org/targets/) for more information.
+B. Executing the `tar_make()` function will download a lot of data (~1GB)
+C. The code will take a long time to run (about 3 hours on a standard laptop).
+
+Instructions: 
+
+1. Download or clone this repository.
+2. Open the `Rstudio` project file `ppm-fire-occurrences.Rproj`.
+3. Run the following code: 
+
+```{r}
+#| eval: false
+library(targets)
+tar_make()
+```
+
+As already mentioned, the `tar_make()` command will execute the code contained in the `_targets.R` file and reproduce the analyses presented in the paper.  At the end of the workflow, you will find a `results.html` file inside the `reports` folder that includes all figures and results. 
+
+## References
+
+Landau, W. M., (2021). The targets R package: a dynamic Make-like function-oriented pipeline toolkit for reproducibility and high-performance computing. Journal of Open Source Software, 6(57), 2959, <https://doi.org/10.21105/joss.02959>
