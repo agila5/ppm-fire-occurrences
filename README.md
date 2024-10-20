@@ -6,7 +6,7 @@ This repository is associated with the paper *Non-separable
 spatio-temporal Poisson point process models for fire occurrences* by
 Nicoletta D’Angelo, Alessandro Albano, Andrea Gilardi, and Giada
 Adelfio. It contains the code and the data necessary to reproduce the
-analyses presented in the manuscript
+analyses presented in the manuscript.
 
 We used the `R` software and the following contributed packages:
 
@@ -79,9 +79,9 @@ We used the `R` software and the following contributed packages:
     ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 **Please check that all necessary packages (or, at least, `targets`,
-`tarchetypes`, and `piggyback`) are installed before going to the next
-section. You will node a reasonably up-to-date Rstudio which includes
-the quarto software.**
+`tarchetypes`, `piggyback`, and `here`) are installed before going to
+the next section. You also need a reasonably up-to-date Rstudio version
+or, at least, a regular installation of `quarto` software.**
 
 ### Instructions
 
