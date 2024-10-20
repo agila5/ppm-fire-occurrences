@@ -1,7 +1,8 @@
 # 0a. Setup ----------------------------------------------------------------
 list_packages <- function() {
   unique(c(
-    "here", "piggyback", "qs", "sf", "tidyverse", "cols4all", "spatstat", 
+    "here", "piggyback", "qs", "sf", "tidyverse", "viridis", "cols4all", 
+    "spatstat", 
     "stars", "scales", "gdalUtilities", "grid", "stpp", "stopp", 
     "mgcv", "plot3D", "grDevices", "colorspace", "sparr", 
     "conflicted"

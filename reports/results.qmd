@@ -959,7 +959,7 @@ if (!interactive()) {
 
 ### Figure 8
 
-We now represent the montly spatio-temporal distribution of NDVI in Sicily mainland
+We now represent the monthly spatio-temporal distribution of NDVI in Sicily mainland
 
 ```{r}
 tar_load(NDVI_tidy)
@@ -1069,7 +1069,7 @@ if (!interactive()) {
     na.rm = TRUE
   )
   sp_palette <- col_numeric(
-    c4a("viridis.turbo", 15), 
+    viridis::turbo(15), 
     domain = sp_2months$sp |> as.vector() |> range(na.rm = TRUE)
   )
 }
@@ -1192,7 +1192,7 @@ if (!interactive()) {
   stl2_2months$stl2 <- stl2_2months$stl2 - 273.15
 
   stl2_palette <- col_numeric(
-    c4a("viridis.turbo", 15),
+    viridis::turbo(15),
     domain = stl2_2months$stl2 |> as.vector() |> range(na.rm = TRUE)
   )
 }

@@ -32,21 +32,21 @@ We used the `R` software and the following contributed packages:
 session_info(pkgs = "attached", dependencies = FALSE)
 ```
 
-**Please check that all necessary packages (especially `targets`, `tarchetypes`, and `piggyback`) are installed before going to the next section.**
+**Please check that all necessary packages (or, at least, `targets`, `tarchetypes`, and `piggyback`) are installed before going to the next section. You will node a reasonably up-to-date Rstudio which includes the quarto software.**
 
 ### Instructions
 
 The following steps are necessary to locally reproduce the results included in the manuscript. Please note that: 
 
-A. We decided to use the [`targets`](https://cran.r-project.org/package=targets) package to manage the workflow and the dependencies between the different steps of the analysis. Therefore, the code is contained in the `_targets.R` file and the results are summarised in the `results.html` file which will be created by `tar_make()` command inside the `reports` folder at the end of the workflow. You can check the `targets` package [documentation](https://books.ropensci.org/targets/) for more information.
-B. Executing the `tar_make()` function will download a lot of data (~1GB)
-C. The code will take a long time to run (about 3 hours on a standard laptop).
+* We decided to use the [`targets`](https://cran.r-project.org/package=targets) package to manage the workflow and the dependencies between the different steps of the analysis. Therefore, the code is contained in the `_targets.R` file and the results are summarised in the `results.html` file which will be created by `tar_make()` command inside the `reports` folder at the end of the workflow. You can check the `targets` package [documentation](https://books.ropensci.org/targets/) for more information.
+* Executing the `tar_make()` function will download a lot of data (~1GB)
+* The statistical modelling step (i.e. the estimation of the global and local models) will take a long time to run (about 3 hours on a standard laptop).
 
 Instructions: 
 
 1. Download or clone this repository.
 2. Open the `Rstudio` project file `ppm-fire-occurrences.Rproj`.
-3. Run the following code: 
+3. Run the following code at the Console: 
 
 ```{r}
 #| eval: false
