@@ -9,8 +9,11 @@ format:
         collapse: true
         crop: true
         dpi: 50
+        echo: true
     toc: true
-    embed-resources: false
+    embed-resources: true
+    code-fold: true
+    code-tools: true
 date: today
 ---
 
@@ -49,6 +52,7 @@ This document replicates the analyses included in the paper entitled *Non-separa
 I need to load several bounding boxes that will be used to create some plots. 
 
 ```{r}
+#| code-fold: false
 tar_load(pantelleria_bbox)
 tar_load(linosa_bbox)
 tar_load(lampedusa_bbox)
@@ -59,6 +63,7 @@ tar_load(sicily_mainland_bbox)
 Define also several vectors that will be used to place inset maps into figures. 
 
 ```{r}
+#| code-fold: false
 xrange_pantelleria <- st_bbox(pantelleria_bbox)[c(1, 3)]
 xrange_lampedusa <- st_bbox(lampedusa_bbox)[c(1, 3)]
 xrange_linosa <- st_bbox(linosa_bbox)[c(1, 3)]
@@ -75,13 +80,13 @@ yrange_linosa <- st_bbox(linosa_bbox)[c(2, 4)]
 Load relevant data, compute the number of points in each region, and plot it.  
 
 ```{r}
+#| code-fold: false
 tar_load(fires_italy)
 tar_load(confini_regioni)
 confini_regioni[["counts"]] <- st_intersects(confini_regioni, fires_italy) |> lengths()
 ```
 
 ```{r}
-#| echo: false
 #| fig-width: 7.5
 #| fig-height: 9
 #| out-width: 70%
@@ -108,6 +113,7 @@ rm(confini_regioni)
 ### Figure 2
 
 ```{r}
+#| code-fold: false
 tar_load(fires_sicily_ppp)
 tar_load(fires_sicily_sf)
 ```
@@ -115,7 +121,6 @@ tar_load(fires_sicily_sf)
 There are `{r} npoints(fires_sicily_ppp)` events that occurred during 2023 in the region. We can check their monthly temporal distribution and compare with the whole country (Figure 2) as follows: 
 
 ```{r}
-#| echo: false
 #| fig-height: 5
 #| fig-width: 7
 #| out-width: 70%
@@ -150,18 +155,14 @@ rm(fires_italy)
 The following map shows spatial distribution of such events (Figure 3): 
 
 ```{r}
-#| include: false
+#| code-fold: false
 tar_load(land_use_tidy_union)
-```
 
-```{r}
-#| include: false
-if (!interactive()) {
-  idx_eventi_pantelleria <- st_contains(pantelleria_bbox, fires_sicily_sf) |> unlist()
-  idx_eventi_linosa <- st_contains(linosa_bbox, fires_sicily_sf) |> unlist()
-  idx_eventi_lampedusa <- st_contains(lampedusa_bbox, fires_sicily_sf) |> unlist()
+idx_eventi_pantelleria <- st_contains(pantelleria_bbox, fires_sicily_sf) |> unlist()
+idx_eventi_linosa <- st_contains(linosa_bbox, fires_sicily_sf) |> unlist()
+idx_eventi_lampedusa <- st_contains(lampedusa_bbox, fires_sicily_sf) |> unlist()
   
-  idx_shape_pantelleria <- st_intersects(pantelleria_bbox, land_use_tidy_union) |> unlist()
+idx_shape_pantelleria <- st_intersects(pantelleria_bbox, land_use_tidy_union) |> unlist()
 shape_pantelleria <- land_use_tidy_union[idx_shape_pantelleria]
 
 idx_shape_linosa <- st_intersects(linosa_bbox, land_use_tidy_union) |> unlist()
@@ -171,11 +172,9 @@ idx_shape_lampedusa <- st_intersects(lampedusa_bbox, land_use_tidy_union) |> unl
 shape_lampedusa <- land_use_tidy_union[idx_shape_lampedusa]
 
 shape_everything_else <- land_use_tidy_union[-c(idx_shape_lampedusa, idx_shape_linosa, idx_shape_pantelleria)]
-}
 ```
 
 ```{r}
-#| include: false
 if (!interactive()) {
   # Main plot
 main_plot <- ggplot() +
@@ -191,13 +190,8 @@ main_plot <- ggplot() +
   ) + 
   theme_light() + 
   theme(panel.background = element_rect(fill = "white"), axis.text = element_text(size = 13.5))
-}
-```
-
-```{r}
-#| include: false
-if (!interactive()) {
-  inset_region <- ggplot() + 
+  
+inset_region <- ggplot() + 
   geom_sf(data = land_use_tidy_union) + 
   geom_sf(data = lampedusa_bbox |> st_boundary()) + 
   geom_sf(data = linosa_bbox |> st_boundary()) + 
@@ -211,13 +205,8 @@ if (!interactive()) {
     plot.margin = margin(0, 0, 0, 0), 
     panel.grid = element_blank()
   )
-}
-```
 
-```{r}
-#| include: false
-if (!interactive()) {
-  inset_pantelleria <- ggplot() + 
+inset_pantelleria <- ggplot() + 
   geom_sf(data = land_use_tidy_union[idx_shape_pantelleria]) + 
   geom_sf(data = fires_sicily_sf[idx_eventi_pantelleria, ]) + 
   coord_sf(xlim = c(1760070, 1773730), ylim = c(4068772, 4082023)) + 
@@ -230,13 +219,8 @@ if (!interactive()) {
     plot.margin = margin(0, 0, 0, 0), 
     panel.grid = element_blank()
   )
-}
-```
 
-```{r}
-#| include: false
-if (!interactive()) {
-  inset_linosa <- ggplot() + 
+inset_linosa <- ggplot() + 
   geom_sf(data = land_use_tidy_union[idx_shape_linosa]) + 
   geom_sf(data = fires_sicily_sf[idx_eventi_linosa, ]) + 
   coord_sf(xlim = c(1846520, 1851748), ylim = c(3973711, 3978066)) + 
@@ -249,13 +233,8 @@ if (!interactive()) {
     plot.margin = margin(0, 0, 0, 0), 
     panel.grid = element_blank()
   )
-}
-```
 
-```{r}
-#| include: false
-if (!interactive()) {
-  inset_lampedusa <- ggplot() + 
+inset_lampedusa <- ggplot() + 
   geom_sf(data = land_use_tidy_union[idx_shape_lampedusa]) + 
   geom_sf(data = fires_sicily_sf[idx_eventi_lampedusa, ]) + 
   coord_sf(xlim = c(1818045, 1830515), ylim = c(3932694, 3938490)) +
@@ -272,7 +251,6 @@ if (!interactive()) {
 ```
 
 ```{r}
-#| echo: false
 #| fig-width: 12
 #| fig-height: 10
 #| out-width: 70%
@@ -365,12 +343,11 @@ if (!interactive()) {
 Spatio-temporal monthly distribution of the events occured in the mainland
 
 ```{r}
-#| include: false
+#| code-fold: false
 tar_load(mainland)
 ```
 
 ```{r}
-#| echo: false
 #| fig-width: 10
 #| fig-height: 8
 #| out-width: 70%
@@ -396,6 +373,7 @@ if (!interactive()) {
 Load relevant data and define a series of indices that will be used to create inset maps. 
 
 ```{r}
+#| code-fold: false
 tar_load(land_use_tidy)
 tar_load(land_use_tidy_union)
 idx_pantelleria <- st_intersects(pantelleria_bbox, land_use_tidy) |> unlist()
@@ -407,7 +385,6 @@ land_use_palermo <- st_intersection(land_use_tidy, palermo_bbox)
 Plot
 
 ```{r}
-#| echo: false
 if (!interactive()) {
   mainland_plot <- ggplot() +
   geom_sf(
@@ -435,13 +412,8 @@ if (!interactive()) {
     plot.title = element_text(face = "bold", size = 18, hjust = 0.5)
   ) + 
   labs(fill = "", title = "Land usage")
-}
-```
 
-```{r}
-#| echo: false
-if (!interactive()) {
-  palermo_zoom <- ggplot() + 
+palermo_zoom <- ggplot() + 
   geom_sf(
     data = land_use_palermo, 
     aes(fill = Code_18), 
@@ -470,13 +442,8 @@ if (!interactive()) {
     plot.margin = margin(0, 0, 0, 0), 
     panel.grid = element_blank()
   )
-}
-```
 
-```{r}
-#| echo: false
-if (!interactive()) {
-  pantelleria_zoom <- ggplot() +
+pantelleria_zoom <- ggplot() +
   geom_sf(
     data = land_use_tidy[idx_pantelleria, ] |> st_transform(4326),
     aes(fill = Code_18), 
@@ -502,13 +469,8 @@ if (!interactive()) {
     axis.ticks.length = unit(0, "pt"), 
     panel.grid = element_blank()
   )
-}
-```
 
-```{r}
-#| echo: false
-if (!interactive()) {
-  lampedusa_zoom <- ggplot() +
+lampedusa_zoom <- ggplot() +
   geom_sf(
     data = land_use_tidy[idx_lampedusa, ] |> st_transform(4326),
     aes(fill = Code_18), 
@@ -534,13 +496,8 @@ if (!interactive()) {
     axis.ticks.length = unit(0, "pt"), 
     panel.grid = element_blank()
   )
-}
-```
 
-```{r}
-#| echo: false
-if (!interactive()) {
-  linosa_zoom <- ggplot() +
+linosa_zoom <- ggplot() +
   geom_sf(
     data = land_use_tidy[idx_linosa, ] |> st_transform(4326),
     aes(fill = Code_18), 
@@ -570,7 +527,6 @@ if (!interactive()) {
 ```
 
 ```{r}
-#| echo: false
 #| fig-width: 12
 #| fig-height: 10
 #| fig-align: center
@@ -627,7 +583,6 @@ if (!interactive()) {
 Graphical representation of the moving grid for Horn's Algorithm
 
 ```{r}
-#| echo: false
 #| fig-width: 10
 #| fig-height: 8
 #| out-width: 70%
@@ -675,21 +630,16 @@ if (!interactive()) {
 The next map represents the elevation in Sicily (which is stored in the object named `elev`). 
 
 ```{r}
+#| code-fold: false
 tar_load(elev)
+
+elev_mainland <- (elev |> st_downsample(c(5, 5)))[shape_everything_else]
+elev_pantelleria <- elev[shape_pantelleria]
+elev_lampedusa <- elev[shape_lampedusa]
+elev_linosa <- elev[shape_linosa]
 ```
 
 ```{r}
-#| include: false
-if (!interactive()) {
-  elev_mainland <- (elev |> st_downsample(c(5, 5)))[shape_everything_else]
-  elev_pantelleria <- elev[shape_pantelleria]
-  elev_lampedusa <- elev[shape_lampedusa]
-  elev_linosa <- elev[shape_linosa]
-}
-```
-
-```{r}
-#| include: false
 if (!interactive()) {
   elev_mainplot <- ggplot() + 
   geom_sf(
@@ -710,13 +660,8 @@ if (!interactive()) {
     plot.title = element_text(face = "bold", size = 26, hjust = 0.5)
   ) + 
   labs(fill = "", title = "Altitude (m)")
-}
-```
 
-```{r}
-#| include: false
-if (!interactive()) {
-  elev_pantelleria_plot <- ggplot() + 
+elev_pantelleria_plot <- ggplot() + 
   geom_stars(data = elev_pantelleria |> st_warp(crs = 4326), na.action = na.omit, show.legend = FALSE) +
   coord_sf(crs = 4326) + 
   scale_fill_gradientn(colours = terrain.colors(100), trans = modulus_trans(p = 0.8), limits = c(0, 3000)) + 
@@ -730,13 +675,8 @@ if (!interactive()) {
     plot.margin = margin(0, 0, 0, 0), 
     panel.grid = element_blank()
   )
-}
-```
 
-```{r}
-#| include: false
-if (!interactive()) {
-  elev_lampedusa_plot <- ggplot() + 
+elev_lampedusa_plot <- ggplot() + 
   geom_stars(
     data = elev_lampedusa |> 
       st_warp(crs = 4326), 
@@ -755,13 +695,8 @@ if (!interactive()) {
     plot.margin = margin(0, 0, 0, 0), 
     panel.grid = element_blank()
   )
-}
-```
 
-```{r}
-#| include: false
-if (!interactive()) {
-  elev_linosa_plot <- ggplot() + 
+elev_linosa_plot <- ggplot() + 
   geom_stars(
     data = elev_linosa |> 
       st_warp(crs = 4326), 
@@ -784,7 +719,6 @@ if (!interactive()) {
 ```
 
 ```{r altitude-new}
-#| echo: false
 #| fig-width: 12
 #| fig-height: 10
 #| out-width: 70%
@@ -824,21 +758,16 @@ if (!interactive()) {
 Analogously, the next map represents the slope in Sicily
 
 ```{r}
+#| code-fold: false
 tar_load(slope)
+
+slope_mainland <- (slope |> st_downsample(c(5, 5)))[shape_everything_else]
+slope_pantelleria <- slope[shape_pantelleria]
+slope_lampedusa <- slope[shape_lampedusa]
+slope_linosa <- slope[shape_linosa]
 ```
 
 ```{r}
-#| include: false
-if (!interactive()) {
-  slope_mainland <- (slope |> st_downsample(c(5, 5)))[shape_everything_else]
-  slope_pantelleria <- slope[shape_pantelleria]
-  slope_lampedusa <- slope[shape_lampedusa]
-  slope_linosa <- slope[shape_linosa]
-}
-```
-
-```{r}
-#| include: false
 if (!interactive()) {
   slope_mainplot <- ggplot() + 
     geom_sf(
@@ -858,13 +787,8 @@ if (!interactive()) {
       plot.title = element_text(face = "bold", size = 26, hjust = 0.5)
     ) + 
   labs(fill = "", title = "Slope (°)")
-}
-```
 
-```{r}
-#| include: false
-if (!interactive()) {
-  slope_pantelleria_plot <- ggplot() + 
+slope_pantelleria_plot <- ggplot() + 
   geom_stars(data = slope_pantelleria |> st_warp(crs = 4326), na.action = na.omit, show.legend = FALSE) +
   coord_sf(crs = 4326) + 
   scale_fill_gradientn(colours = terrain.colors(100), trans = modulus_trans(p = 0.8), limits = c(0, 80)) + 
@@ -878,13 +802,8 @@ if (!interactive()) {
     plot.margin = margin(0, 0, 0, 0), 
     panel.grid = element_blank()
   )
-}
-```
 
-```{r}
-#| include: false
-if (!interactive()) {
-  slope_lampedusa_plot <- ggplot() + 
+slope_lampedusa_plot <- ggplot() + 
   geom_stars(data = slope_lampedusa |> st_warp(crs = 4326), na.action = na.omit, show.legend = FALSE) + 
   coord_sf(crs = 4326) + 
   scale_fill_gradientn(colours = terrain.colors(100), trans = scales::modulus_trans(p = 0.7), limits = c(0, 80)) + 
@@ -898,13 +817,8 @@ if (!interactive()) {
     plot.margin = margin(0, 0, 0, 0), 
     panel.grid = element_blank()
   )
-}
-```
 
-```{r}
-#| include: false
-if (!interactive()) {
-  slope_linosa_plot <- ggplot() + 
+slope_linosa_plot <- ggplot() + 
   geom_stars(data = slope_linosa |> st_warp(crs = 4326), na.action = na.omit, show.legend = FALSE) + 
   coord_sf(crs = 4326) + 
   scale_fill_gradientn(colours = terrain.colors(100), trans = scales::modulus_trans(p = 0.7), limits = c(0, 80)) + 
@@ -922,7 +836,6 @@ if (!interactive()) {
 ```
 
 ```{r slope-new}
-#| echo: false
 #| fig-width: 12
 #| fig-height: 10
 #| out-width: 70%
@@ -962,13 +875,13 @@ if (!interactive()) {
 We now represent the monthly spatio-temporal distribution of NDVI in Sicily mainland
 
 ```{r}
+#| code-fold: false
 tar_load(NDVI_tidy)
 tar_load(NDVI_tidy_agg_1month)
 NDVI_tidy_agg_1month <- NDVI_tidy_agg_1month[mainland]
 ```
 
 ```{r NDVI-space-time}
-#| echo: false
 #| out-width: 70%
 #| fig-align: center
 #| fig-width: 12
@@ -1011,11 +924,11 @@ if (!interactive()) {
 Relationship between NDVI and land use
 
 ```{r}
+#| code-fold: false
 tar_load(NDVI_and_landuse)
 ```
 
 ```{r NDVI-and-landuse}
-#| echo: false
 #| out-width: 70%
 #| fig-align: center
 #| fig-width: 8
@@ -1045,43 +958,31 @@ rm(NDVI_and_landuse)
 Next we replicate the space-time representation of the environmental variables, namely Surface Pressure 
 
 ```{r}
-#| include: false
+#| code-fold: false
 tar_load(env_var)
-```
 
-```{r}
-#| include: false
 # 1. Simplify the structure of the environmental variable taking a spatial subset and a daily average (the original data have hourly frequency). 
-if (!interactive()) {
-  env_var <- env_var[mainland]; gc()
-  env_var <- aggregate(env_var, max, by = "1 day"); gc()
-}
-```
+env_var <- env_var[mainland]; invisible(gc)
+env_var <- aggregate(env_var, max, by = "1 day"); invisible(gc)
 
-```{r}
-#| include: false
 # 2a. Subset the surface pressure data and build the palette
-if (!interactive()) {
-  sp_2months <- aggregate(
-    env_var["sp", ], 
-    mean, 
-    by = "2 months", 
-    na.rm = TRUE
-  )
-  sp_palette <- col_numeric(
-    viridis::turbo(15), 
-    domain = sp_2months$sp |> as.vector() |> range(na.rm = TRUE)
-  )
-}
+sp_2months <- aggregate(
+  env_var["sp", ], 
+  mean, 
+  by = "2 months", 
+  na.rm = TRUE
+)
+sp_palette <- col_numeric(
+  viridis::turbo(15), 
+  domain = sp_2months$sp |> as.vector() |> range(na.rm = TRUE)
+)
 ```
 
 ```{r}
-#| echo: false
 #| out-width: 70%
 #| fig-align: center
 #| fig-width: 10.5
 #| fig-height: 7.5
-# 3a. Build the plot
 if (!interactive()) {
   grid.newpage()
   vp1 <- viewport(
@@ -1180,26 +1081,22 @@ if (!interactive()) {
 and Skin Temperature
 
 ```{r}
-#| include: false
-# 2a. Subset the surface pressure data and build the palette
-if (!interactive()) {
-  stl2_2months <- aggregate(
-    env_var["stl2", ],
-    mean,
-    by = "2 months",
-    na.rm = TRUE
-  )
-  stl2_2months$stl2 <- stl2_2months$stl2 - 273.15
+#| code-fold: false
+stl2_2months <- aggregate(
+  env_var["stl2", ],
+  mean,
+  by = "2 months",
+  na.rm = TRUE
+)
+stl2_2months$stl2 <- stl2_2months$stl2 - 273.15
 
-  stl2_palette <- col_numeric(
-    viridis::turbo(15),
-    domain = stl2_2months$stl2 |> as.vector() |> range(na.rm = TRUE)
-  )
-}
+stl2_palette <- col_numeric(
+  viridis::turbo(15),
+  domain = stl2_2months$stl2 |> as.vector() |> range(na.rm = TRUE)
+)
 ```
 
 ```{r}
-#| echo: false
 #| out-width: 70%
 #| fig-align: center
 #| fig-width: 10.5
@@ -1313,6 +1210,7 @@ if (!interactive()) {
 Now we replicate the plots regarding the temporal distribution of some environmental variables
 
 ```{r}
+#| code-fold: false
 tar_load(cov_time)
 
 # Kelvin to Celsius
@@ -1326,7 +1224,6 @@ cov_time$stl4 <- cov_time$stl4 - 273.15
 ```
 
 ```{r wind-speed-time}
-#| echo: false
 #| out-width: 70%
 #| fig-align: center
 #| fig-width: 6
@@ -1342,7 +1239,6 @@ if (!interactive()) {
 ```
 
 ```{r temperatures-time}
-#| echo: false
 #| out-width: 70%
 #| fig-align: center
 #| fig-width: 6
@@ -1365,7 +1261,6 @@ if (!interactive()) {
 ```
 
 ```{r precipitations-time}
-#| echo: false
 #| out-width: 70%
 #| fig-align: center
 #| fig-width: 6
@@ -1379,7 +1274,6 @@ if (!interactive()) {
 ```
 
 ```{r pressure-time}
-#| echo: false
 #| out-width: 70%
 #| fig-align: center
 #| fig-width: 6
@@ -1397,7 +1291,6 @@ if (!interactive()) {
 Next we focus on the pairs plot
 
 ```{r pairs_temperature}
-#| echo: false
 #| out-width: 70%
 #| fig-align: center
 #| fig-width: 12
@@ -1437,6 +1330,7 @@ rm(cov_time, panel.hist, panel.cor)
 The object `mod_global` contains the estimates for the global model
 
 ```{r}
+#| code-fold: false
 tar_load(mod_global)
 summary(mod_global$mod_global)
 ```
@@ -1446,11 +1340,9 @@ summary(mod_global$mod_global)
 The parameter estimates for the local model are summarised in the following plot: 
 
 ```{r}
+#| code-fold: false
 tar_load(mod_local)
-```
 
-```{r}
-#| include: false
 plot_covs_3D <- function(
   name,
   bias, 
@@ -1497,7 +1389,6 @@ plot_covs_3D <- function(
 ```
 
 ```{r covs-local-all-together}
-#| echo: false
 #| fig-width: 15
 #| fig-height: 15
 #| fig-align: center
@@ -1526,7 +1417,6 @@ if (!interactive()) {
 Global and local estimates of the intensity function: 
 
 ```{r global-and-local-intensity}
-#| echo: false
 #| fig-width: 10.5
 #| fig-height: 8.5
 #| fig-align: center
@@ -1581,6 +1471,7 @@ if (!interactive()) {
 Comparison between the residuals in the global and local model. 
 
 ```{r}
+#| code-fold: false
 #| warning: false
 # Focus on the mainland
 id1 <- (!(fires_sicily_ppp$x < 1800000 | fires_sicily_ppp$y > 4263000))
@@ -1620,15 +1511,7 @@ cc_dens = mapply(
 # We need to remove such points at the boundary of the time interval
 id_no <- vapply(cc_dens, identical, logical(1), y = numeric(0)) |> which()
 nX <- length(unlist(cc_dens))
-```
 
-```{r residui-no-pt-neri-proposta2}
-#| echo: false
-#| fig-width: 10
-#| warning: false
-#| crop: true
-#| fig-align: center
-#| out-width: 80%
 dt <- data.frame(
   pred = c(
     mod_local$l[id][-id_no], mod_local$l_local[id][-id_no]
@@ -1636,6 +1519,14 @@ dt <- data.frame(
   smo = c(unlist(cc_dens) * nX, unlist(cc_dens) * nX), 
   type = rep(c("Global", "Local"), each = length(unlist(cc_dens)))
 )
+```
+
+```{r residui-no-pt-neri-proposta2}
+#| fig-width: 10
+#| warning: false
+#| crop: true
+#| fig-align: center
+#| out-width: 80%
 if (!interactive()) {
   ggplot(dt, aes(x = pred, y = smo)) + 
   geom_point() + 
@@ -1658,6 +1549,7 @@ if (!interactive()) {
 Density distribution of the residuals
 
 ```{r}
+#| code-fold: false
 residui_global <- unlist(cc_dens) * nX - mod_local$l[id][-id_no]
 residui_local <- unlist(cc_dens) * nX - mod_local$l_local[id][-id_no]
 
@@ -1668,7 +1560,6 @@ residui <- data.frame(
 ```
 
 ```{r density-residuals}
-#| echo: false
 #| fig-width: 10
 #| fig-height: 7
 #| crop: true
@@ -1690,7 +1581,6 @@ if (!interactive()) {
 Spatio-temporal residuals of the local model: 
 
 ```{r residui-local-3D}
-#| echo: false
 #| crop: true
 #| fig-align: center
 #| out-width: 80%
