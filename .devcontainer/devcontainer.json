@@ -9,7 +9,7 @@
             "packages": "libudunits2-dev,libxtst6,libxt6,libmagick++-dev"
         },
         "ghcr.io/rocker-org/devcontainer-features/r-packages:1": {
-            "packages": "tidyverse,here,httpgd"
+            "packages": "tidyverse,here,httpgd,targets,tarchetypes,here,piggyback"
         },
     },
     "customizations": {
