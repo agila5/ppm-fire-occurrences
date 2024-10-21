@@ -9,12 +9,21 @@
             "packages": "libudunits2-dev,libxtst6,libxt6,libmagick++-dev"
         },
         "ghcr.io/rocker-org/devcontainer-features/r-packages:1": {
-            "packages": "tidyverse,here,httpgd,targets,tarchetypes,here,piggyback"
+            "packages": "tidyverse,here,httpgd,targets,tarchetypes,here,piggyback,magick,viridis,cols4all,gdalUtilities,stpp,stopp,plot3D,sparr"
         },
     },
+    "forwardPorts": [8787, 8888],
+    "portsAttributes": {
+		    "8787": {
+			    "label": "Rstudio",
+			    "requireLocalPort": true,
+			    "onAutoForward": "ignore"
+		    }
+	  },
     "customizations": {
         "codespaces": {
             "openFiles": ["README.md"]
         }
-    }
+    }, 
+    "postAttachCommand": "sudo rstudio-server start"
 }
