@@ -939,8 +939,340 @@ if (!interactive()) {
 
 ```{r}
 #| include: false
+rm(elev_lampedusa, elev_linosa, elev_mainland, elev_pantelleria)
 if (!interactive()) {
-  rm(elev_lampedusa, elev_linosa, elev_mainland, elev_pantelleria, elev_mainplot, elev_pantelleria_plot, elev_lampedusa_plot, elev_linosa_plot)
+  rm(elev_mainplot, elev_pantelleria_plot, elev_lampedusa_plot, elev_linosa_plot)
 }
+```
+
+### Figure 7b
+
+As we mentioned in the paper, the slope is computed using the GDAL DEM tools
+
+```{r}
+slope <- qcache(
+  {
+    tmp_dir <- tempdir()
+    orig_tif <- generate_orig_tif(here("data", "INGV-elev.zip"), tmp_dir)
+    unlink(paste0(tmp_dir, "INGV-elev"), recursive = TRUE)
+    invisible(gc())
+    
+    temp_tif <- tempfile(fileext = ".tif")
+    write_stars(orig_tif, temp_tif, progress = FALSE)
+    
+    temp_slope <- tempfile(fileext = ".tif")
+    gdaldem("slope", temp_tif, temp_slope)
+    slope <- read_stars(temp_slope)
+    slope <- slope |> st_downsample(c(10, 10)) |> st_warp(crs = 3003)
+    slope <- slope[st_bbox(land_use_tidy_union)]
+    slope <- slope[land_use_tidy_union]
+    
+    unlink(list.files(tmp_dir, pattern = "\\.tif", full.names = TRUE))
+    rm(orig_tif, temp_tif, temp_slope)
+    invisible(gc())
+    slope
+  },
+  name = "slope",
+  cache_dir = here("qcache")
+)
+```
+
+As before, we can subset the `stars` object
+
+```{r}
+slope_mainland <- (slope |> st_downsample(c(5, 5)))[shape_everything_else]
+slope_pantelleria <- slope[shape_pantelleria]
+slope_lampedusa <- slope[shape_lampedusa]
+slope_linosa <- slope[shape_linosa]
+```
+
+and now we can plot it
+
+```{r}
+#| fig-width: 12
+#| fig-height: 10
+#| out-width: 70%
+#| fig-align: center
+if (!interactive()) {
+  slope_mainplot <- ggplot() +
+    geom_sf(
+      aes(fill = value),
+      data = slope_mainland |> st_as_sf() |> setNames(c("value", "geometry")),
+      linewidth = NA
+    ) +
+    theme_light() +
+    scale_fill_gradientn(
+      colours = terrain.colors(100),
+      trans = modulus_trans(p = 0.8)
+    ) +
+    theme(
+      axis.text = element_text(size = 19.5),
+      legend.text = element_text(size = 19.5),
+      legend.key.height = unit(3, "lines"),
+      plot.title = element_text(face = "bold", size = 26, hjust = 0.5)
+    ) +
+    labs(fill = "", title = "Slope (°)")
+
+  slope_pantelleria_plot <- ggplot() +
+    geom_stars(data = slope_pantelleria |> st_warp(crs = 4326), na.action = na.omit, show.legend = FALSE) +
+    coord_sf(crs = 4326) +
+    scale_fill_gradientn(colours = terrain.colors(100), trans = modulus_trans(p = 0.8), limits = c(0, 80)) +
+    theme_minimal() +
+    theme(
+      panel.background = element_rect(fill = "white", linewidth = 3),
+      axis.title = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      axis.ticks.length = unit(0, "pt"),
+      plot.margin = margin(0, 0, 0, 0),
+      panel.grid = element_blank()
+    )
+
+  slope_lampedusa_plot <- ggplot() +
+    geom_stars(data = slope_lampedusa |> st_warp(crs = 4326), na.action = na.omit, show.legend = FALSE) +
+    coord_sf(crs = 4326) +
+    scale_fill_gradientn(colours = terrain.colors(100), trans = scales::modulus_trans(p = 0.7), limits = c(0, 80)) +
+    theme_minimal() +
+    theme(
+      panel.background = element_rect(fill = "white", linewidth = 3),
+      axis.title = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      axis.ticks.length = unit(0, "pt"),
+      plot.margin = margin(0, 0, 0, 0),
+      panel.grid = element_blank()
+    )
+
+  slope_linosa_plot <- ggplot() +
+    geom_stars(data = slope_linosa |> st_warp(crs = 4326), na.action = na.omit, show.legend = FALSE) +
+    coord_sf(crs = 4326) +
+    scale_fill_gradientn(colours = terrain.colors(100), trans = scales::modulus_trans(p = 0.7), limits = c(0, 80)) +
+    theme_minimal() +
+    theme(
+      panel.background = element_rect(fill = "white", linewidth = 2),
+      axis.title = element_blank(),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      axis.ticks.length = unit(0, "pt"),
+      plot.margin = margin(0, 0, 0, 0),
+      panel.grid = element_blank()
+    )
+
+  ggplot() +
+    coord_equal(xlim = c(0, 24), ylim = c(0, 20), expand = FALSE) +
+    annotation_custom(
+      ggplotGrob(slope_mainplot),
+      xmin = 0, xmax = 24, ymin = 0, ymax = 20
+    ) +
+    annotation_custom(
+      ggplotGrob(slope_pantelleria_plot),
+      xmin = 2.5, xmax = 5.5, ymin = 3.15, ymax = 6.15
+    ) +
+    annotation_custom(
+      ggplotGrob(slope_lampedusa_plot),
+      xmin = 6.25, xmax = 6.25 + 3 * diff(xrange_lampedusa) / diff(xrange_pantelleria),
+      ymin = 3.8, ymax = 3.8 + 3 * diff(yrange_lampedusa) / diff(yrange_pantelleria)
+    ) +
+    annotation_custom(
+      ggplotGrob(slope_linosa_plot),
+      xmin = 9.5, xmax = 9.5 + 3 * diff(xrange_linosa) / diff(xrange_pantelleria),
+      ymin = 4.2, ymax = 4.2 + 3 * diff(yrange_linosa) / diff(yrange_pantelleria)
+    ) +
+    theme(panel.background = element_rect(fill = "white"))
+}
+```
+
+```{r}
+#| include: false
+rm(slope_mainland, slope_pantelleria, slope_linosa, slope_lampedusa)
+if (!interactive()) {
+  rm(slope_mainplot, slope_pantelleria_plot, slope_linosa_plot, slope_lampedusa_plot)
+}
+```
+
+### Figure 8
+
+The NDVI data can be loaded as follows
+
+```{r}
+NDVI_raw <- qcache(
+  {
+    tmp_dir <- tempdir()
+    unzip(here("data", "NDVI.zip"), exdir = tmp_dir)
+    files <- list.files(
+      paste0(tmp_dir, "/NDVI"), 
+      pattern = "\\.nc$",
+      full.names = TRUE
+    )
+    # Currently, the structure returned by read_stars is an array with
+    # dimension 1253 x 1116 and 36 attributes (1 for each NDVI in a 10 days
+    # interval). We need to convert it to a 1253 x 1116 x 36 array with 1
+    # attribute. See below (NDVI_tidy).
+    out <- read_stars(files, quiet = TRUE, proxy = FALSE)
+    unlink(paste0(tmp_dir, "/NDVI"), recursive = TRUE)
+    out
+  }, 
+  name = "NDVI_raw", 
+  cache_dir = here("qcache")
+)
+```
+
+```{r}
+#| include: false
+if (exists("files")) {
+  rm(files)
+}
+if (exists("out")) {
+  rm(out)
+}
+```
+
+As mentioned in the code chunk, the `NDVI_raw` object needs a bit of preprocessing to convert it into a usable format
+
+```{r}
+# The online docs say that the NDVI measurements are shared approximately
+# every 10 days
+day_jan <- c(
+  as.Date("2023-01-01"), as.Date("2023-01-11"), as.Date("2023-01-21")
+)
+
+# The following code is taken from the first vignette of stars package.
+NDVI_tidy <- qcache(
+  {
+    merge(NDVI_raw) |>
+      setNames("NDVI") |>
+      st_set_dimensions(
+        3,
+        values = c(
+          day_jan,
+          day_jan + months(1),
+          day_jan + months(2),
+          day_jan + months(3),
+          day_jan + months(4),
+          day_jan + months(5),
+          day_jan + months(6),
+          day_jan + months(7),
+          day_jan + months(8),
+          day_jan + months(9),
+          day_jan + months(10),
+          day_jan + months(11)
+        ),
+        names = "time"
+      ) |>
+      st_warp(crs = 3003, cellsize = c(500, 500))
+  },
+  name = "NDVI_tidy",
+  cache_dir = here("qcache")
+)
+rm(day_jan)
+invisible(gc())
+```
+
+We can temporally aggregate the NDVI values at the monthly level 
+
+```{r}
+NDVI_tidy_agg_1month <- qcache(
+  {
+    aggregate(NDVI_tidy, by = "months", FUN = mean)[mainland]
+  },
+  name = "NDVI_tidy_agg_1month",
+  cache_dir = here("qcache")
+)
+```
+
+and show them
+
+```{r}
+#| out-width: 70%
+#| fig-align: center
+#| fig-width: 12
+#| fig-height: 10
+if (!interactive()) {
+  ggplot() + 
+  geom_stars(data = NDVI_tidy_agg_1month, downsample = c(1, 1, 0)) + 
+  facet_wrap(~time) + 
+  scale_fill_gradient2(
+    low = "#8d5e0b", 
+    mid = "#e6e91a", 
+    high = "#045b00", 
+    midpoint = 0.5, 
+    limits = c(-0.08, 0.92), 
+    na.value = "lightblue"
+  ) + 
+  theme_light() + 
+  theme(
+    axis.text = element_blank(), 
+    axis.ticks = element_blank(), 
+    axis.title = element_blank(), 
+    panel.grid = element_blank(), 
+    panel.background = element_rect(fill = "lightblue"), 
+    strip.text = element_text(face = "bold", size = 13), 
+    legend.title = element_text(size = 13), 
+    legend.text = element_text(size = 10)
+  )
+}
+```
+
+```{r}
+#| include: false
+rm(NDVI_tidy_agg_1month)
+invisible(gc())
+```
+
+### Figure 9
+
+The following code computes the average NDVI for each land use type
+
+```{r}
+NDVI_and_landuse <- qcache(
+  {
+    st_warp(
+      NDVI_tidy,
+      st_as_stars(st_bbox(NDVI_tidy), dx = 1500, dy = 1500)
+    ) |>
+      aggregate(
+        by = land_use_tidy |> group_by(Code_18) |> summarise(),
+        FUN = mean,
+        na.rm = TRUE
+      )
+  },
+  name = "NDVI_and_landuse",
+  cache_dir = here("qcache")
+)
+```
+
+and we can plot it as follows
+
+```{r}
+#| out-width: 70%
+#| fig-align: center
+#| fig-width: 8
+#| fig-height: 5
+if (!interactive()) {
+  NDVI_and_landuse |> 
+  st_as_sf() |> 
+  mutate(idx = c("Artificial surfaces", "Agricultural areas", "Forests", "Water bodies")) |> 
+    st_drop_geometry() |> 
+  pivot_longer(!idx, names_to = "date", names_transform = list(
+    date = as.Date
+  )) |> 
+  ggplot() + 
+  geom_line(aes(x = date, y = value, col = idx, linetype = idx), linewidth = 1.3) + 
+  theme_light() + 
+  labs(x = "", y = "Average NDVI", linetype = "", col = "")
+}
+```
+
+```{r}
+#| include: false
+rm(NDVI_and_landuse)
+```
+
+### Figure 10
+
+Next we load the environmental variables downloaded from ERA5
+
+```{r}
+
 ```
 
