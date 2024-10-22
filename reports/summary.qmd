@@ -1,0 +1,283 @@
+---
+title: "Non-separable spatio-temporal Poisson point process models for fire occurrences - Companion code"
+author: "Nicoletta D'Angelo, Alessandro Albano, Andrea Gilardi, Giada Adelfio"
+format: 
+  html: 
+    page-layout: full
+    knitr: 
+      opts_chunk: 
+        collapse: true
+        crop: true
+        dpi: 50
+        echo: true
+    toc: true
+    embed-resources: false
+date: today
+---
+
+```{r setup-and-packages}
+#| include: false
+knitr::knit_hooks$set(crop = knitr::hook_pdfcrop)
+options(width = 100)
+```
+
+This document replicates the analyses included in the paper entitled *Non-separable spatio-temporal Poisson point process models for fire occurrences*. 
+
+## Premilinary steps
+
+Load relevant packages
+
+```{r}
+library(here)
+source(here("R", "packages.R"))
+```
+
+Download (if necessary) relevant data from the Github Repository
+
+```{r}
+if (!dir.exists(here("data"))) {
+  dir.create(here("data"))
+}
+pb_download(
+  file = c(
+    "DL_FIRE_J1V-C2_510187.zip", "confini-regioni.zip", "land-use.zip", "NDVI.zip", 
+    "environmental-variables.zip", "INGV-elev.zip"
+  ), 
+  dest = here("data"), 
+  repo = "agila5/ppm-fire-occurrences",
+  tag = "v1-data", 
+  overwrite = TRUE, 
+  show_progress = FALSE
+)
+```
+
+Define a folder where we will cache long running tasks
+
+```{r}
+if (!dir.exists(here("qcache"))) {
+  dir.create(here("qcache"))
+}
+```
+
+Define several bounding boxes that will be used to create some plots. 
+
+```{r}
+define_bb <- function(
+    xmin,
+    ymin,
+    xmax,
+    ymax,
+    crs) {
+  bbox <- st_bbox(
+    c(xmin = xmin, ymin = ymin, xmax = xmax, ymax = ymax),
+    crs = crs
+  ) |> st_as_sfc()
+
+  if (st_crs(bbox) == st_crs(3003)) {
+    return(bbox)
+  }
+  st_transform(bbox, 3003)
+}
+
+pantelleria_bbox <- define_bb(
+  xmin = 12.84838, ymin = 35.85436,
+  xmax = 12.88393, ymax = 35.87595,
+  crs = "OGC:CRS84"
+)
+linosa_bbox <- define_bb(
+  xmin = 12.84838, ymin = 35.85436,
+  xmax = 12.88393, ymax = 35.87595,
+  crs = "OGC:CRS84"
+)
+lampedusa_bbox <- define_bb(
+  xmin = 12.51730, ymin = 35.49295,
+  xmax = 12.63422, ymax = 35.52931,
+  crs = "OGC:CRS84"
+)
+palermo_bbox <- define_bb(
+  xmin = 1871427, xmax = 1890744,
+  ymin = 4219859, ymax = 4240118,
+  crs = 3003
+)
+sicily_mainland_bbox <- define_bb(
+  xmin = 1807082, ymin = 4041434,
+  xmax = 2083886, ymax = 4265502,
+  crs = 3003
+)
+```
+
+Define also several vectors that will be used to place inset maps into figures.
+
+```{r}
+#| code-fold: false
+xrange_pantelleria <- st_bbox(pantelleria_bbox)[c(1, 3)]
+xrange_lampedusa <- st_bbox(lampedusa_bbox)[c(1, 3)]
+xrange_linosa <- st_bbox(linosa_bbox)[c(1, 3)]
+
+yrange_pantelleria <- st_bbox(pantelleria_bbox)[c(2, 4)]
+yrange_lampedusa <- st_bbox(lampedusa_bbox)[c(2, 4)]
+yrange_linosa <- st_bbox(linosa_bbox)[c(2, 4)]
+```
+
+## Section 2
+
+### Figure 1
+
+Load relevant data regarding the fires in Italy
+
+```{r}
+fires_italy <- st_read(
+  paste0("/vsizip/", here("data", "DL_FIRE_J1V-C2_510187.zip")), 
+  quiet = TRUE
+) |> 
+  st_transform(3003) |> 
+  mutate(
+    ACQ_DATETIME = ymd_hm(paste0(ACQ_DATE, " ", ACQ_TIME))
+  )
+```
+
+and borders of the regions
+
+```{r}
+confini_regioni <- st_read(
+  paste0("/vsizip/", here("data", "confini-regioni.zip"), "/confini-regioni"), 
+  quiet = TRUE
+) |> 
+  st_transform(3003)
+```
+
+Compute the number of fires in each region
+
+```{r}
+confini_regioni[["counts"]] <- st_intersects(confini_regioni, fires_italy) |> lengths()
+```
+
+and plot it
+
+```{r}
+#| fig-width: 7.5
+#| fig-height: 9
+#| out-width: 70%
+#| fig-align: center
+if (!interactive()) {
+  ggplot(data = confini_regioni) + 
+  geom_sf(aes(fill = counts)) + 
+  scale_fill_continuous_c4a_seq("brewer.oranges")+
+  theme_minimal() + 
+  theme(
+    legend.title = element_text(size = 14), 
+    legend.text = element_text(size = 10), 
+    legend.key.height = unit(2, "lines")
+  ) + 
+  labs(fill = "Fire counts")
+}
+```
+
+```{r}
+#| include: false
+rm(confini_regioni)
+```
+
+### Figure 2
+
+Now we need to filter the fires that occurred in Sicily using the bounding box defined by the land-use data object. Therefore, we need to load it 
+
+```{r}
+land_use_raw <- st_read(
+  paste0("/vsizip/", here("data", "land-use.zip"), "/land-use"), 
+  quiet = TRUE
+)
+```
+
+and apply a series of preprocessing steps to simplify and tidy its structure (following the procedures described in the paper)
+
+```{r}
+#| message: false
+land_use_tidy <- qcache(
+  {
+    land_use_raw |>
+      select(Code_18) |>
+      st_transform(crs = 3003) |> # for spatstat
+      st_set_agr(c(Code_18 = "constant")) |> # remove warning on "st_cast"
+      st_cast("POLYGON") |>
+      st_make_valid() |>
+      # Merge together areas with the same macro code
+      mutate(Code_18 = substr(Code_18, 1, 1)) |> # Get the macro code
+      mutate(
+        Code_18 = factor(
+          Code_18,
+          labels = c(
+            "Artificial surfaces",
+            "Agricultural areas",
+            "Forests",
+            "Water bodies",
+            "Water bodies"
+          )
+        )
+      ) |>
+      group_by(Code_18) |>
+      summarise()
+  },
+  name = "land_use_tidy",
+  cache_dir = here("qcache") 
+)
+```
+
+```{r}
+#| include: false
+rm(land_use_raw)
+```
+
+We need to convert it into `tess` format for `spatstat`
+
+```{r}
+owins <-
+  lapply(
+    st_geometry(land_use_tidy),
+    as.owin
+  ) |>
+  set_names(
+    land_use_tidy[["Code_18"]]
+  )
+land_use_tess <- tess(tiles = owins); rm(owins)
+```
+
+and use its `Window` attribute to filter the fire points
+
+```{r}
+fires_sicily <- fires_italy[
+  Window(land_use_tess) |> st_as_sfc() |> st_set_crs(3003), 
+]
+```
+
+There are `{r} nrow(fires_sicily)` events that occurred during 2023 in the region. We can check their monthly temporal distribution and compare with the whole country (Figure 2) as follows:
+
+```{r}
+#| fig-height: 5
+#| fig-width: 7
+#| out-width: 70%
+#| fig-align: center
+if (!interactive()) {
+  bind_rows(
+  Italy = fires_italy |> st_drop_geometry(), 
+  Sicily = fires_sicily |> st_drop_geometry(), 
+  .id = "ID"
+) |> 
+  group_by(ID, month = month(ACQ_DATETIME, label = TRUE)) |> 
+  count() |> 
+  ggplot(aes(x = month, y = n, fill = ID)) + 
+  geom_col(position = position_dodge(), alpha = 0.75) + 
+  geom_text(aes(label = n), fontface = "bold", vjust = 1.5, position = position_dodge(.9), size = 2) + 
+  scale_fill_manual(values = c("orange", "brown")) + 
+  labs(x = "\n Month", y = "Fire Counts\n", fill = "") + 
+  theme_minimal() + 
+  theme(
+    axis.title = element_text(face = "bold", size = 12)
+  )
+}
+```
+
+```{r}
+#| include: false
+rm(fires_italy)
+```
