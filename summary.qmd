@@ -8,10 +8,10 @@ format:
       opts_chunk: 
         collapse: true
         crop: true
-        dpi: 50
+        dpi: 100
         echo: true
     toc: true
-    embed-resources: false
+    embed-resources: true
 date: today
 ---
 
