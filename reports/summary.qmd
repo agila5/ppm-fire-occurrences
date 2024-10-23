@@ -38,17 +38,22 @@ Download (if necessary) relevant data from the Github Repository
 if (!dir.exists(here("data"))) {
   dir.create(here("data"))
 }
-pb_download(
-  file = c(
-    "DL_FIRE_J1V-C2_510187.zip", "confini-regioni.zip", "land-use.zip", "NDVI.zip", 
-    "environmental-variables.zip", "INGV-elev.zip"
-  ), 
-  dest = here("data"), 
-  repo = "agila5/ppm-fire-occurrences",
-  tag = "v1-data", 
-  overwrite = TRUE, 
-  show_progress = FALSE
+data_names <- c(
+  "DL_FIRE_J1V-C2_510187.zip", "confini-regioni.zip", "land-use.zip", "NDVI.zip", 
+  "environmental-variables.zip", "INGV-elev.zip"
 )
+data_paths <- here("data", data_names)
+if (!all(file.exists(data_paths))) {
+  pb_download(
+    file = data_names, 
+    dest = here("data"), 
+    repo = "agila5/ppm-fire-occurrences",
+    tag = "v1-data", 
+    overwrite = TRUE, 
+    show_progress = FALSE
+  )
+}
+rm(data_names, data_paths)
 ```
 
 Download (if necessary) cached results from the Github Repository
@@ -58,16 +63,21 @@ if (!dir.exists(here("qcache"))) {
   dir.create(here("qcache"))
 }
 
-pb_download(
-  file = c(
+qcache_names <- c(
     "slope.qs", "NDVI_tidy.qs", "NDVI_tidy_agg_1month.qs", "NDVI_raw.qs", "NDVI_and_landuse.qs", "land_use_tidy.qs", "land_use_tidy_union.qs", "env_var.qs", "elev.qs", "cov_time.qs"
-  ), 
-  dest = here("qcache"), 
-  repo = "agila5/ppm-fire-occurrences",
-  tag = "v1-data", 
-  overwrite = TRUE, 
-  show_progress = FALSE
-)
+  )
+qcache_paths <- here("qcache", qcache_names)
+if (!all(file.exists(qcache_paths))) {
+  pb_download(
+    file = qcache_names, 
+    dest = here("qcache"), 
+    repo = "agila5/ppm-fire-occurrences",
+    tag = "v1-data", 
+    overwrite = TRUE, 
+    show_progress = FALSE
+  )
+}
+rm(qcache_names, qcache_paths)
 ```
 
 Define several bounding boxes that will be used to create some plots. 
@@ -1830,10 +1840,14 @@ invisible(gc())
 Now we can extract the ERA5-covariates values at these points
 
 ```{r}
+st_dimensions(env_var)[["time"]]$values <- seq.Date(
+  as.Date("2022-12-31"), by = "1 day", length.out = 365
+)
+
 env_cov_st <- st_extract(
   x = env_var,
   at = pts_combined,
-  time_column = "time"
+  time_column = "time" 
 )
 env_cov_st <- st_drop_geometry(env_cov_st)[, -c(12)]
 ```
