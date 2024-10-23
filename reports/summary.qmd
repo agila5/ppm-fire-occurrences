@@ -1270,9 +1270,463 @@ rm(NDVI_and_landuse)
 
 ### Figure 10
 
+First, we need to define a few auxiliary functions: 
+
+```{r}
+normalize <- function(x, max = 1) {
+  x <- as.numeric(x)
+  (x - min(x)) / (max(x) - min(x)) * max
+}
+
+# The following function is used to create the space-time representation
+# of the environmental variables. See below. 
+tf = function(x, y, w = .75, h = .33) {
+  x2 = x * w + y * (1 - w)
+  y2 = y * h
+  x2[length(x2) + 1] = x2[1]
+  y2[length(y2) + 1] = y2[1]
+  list(x = x2, y = y2)
+}
+```
+
 Next we load the environmental variables downloaded from ERA5
 
 ```{r}
-
+env_var <- qcache(
+  {
+    tmp_dir <- tempdir()
+    unzip(here("data", "environmental-variables.zip"), exdir = tmp_dir)
+    nc_files <- list.files(
+      paste0(tmp_dir, "/environmental-variables"),
+      pattern = "\\.nc$",
+      full.names = TRUE
+    )
+    img_combined <- lapply(
+      nc_files,
+      function(x, var) {
+        img <- read_ncdf(x, var = var)
+        if (grepl("october.nc", x, fixed = TRUE)) {
+          img <- img[, , , 2, , drop = TRUE]
+        }
+        img
+      },
+      var = c("u10", "v10", "d2m", "t2m", "skt", "stl1", "stl2", "stl3", "stl4", "sp", "tp")
+    ) |>
+      do.call(c, args = _)
+    unlink(nc_files); rm(nc_files); invisible(gc())
+    st_crs(img_combined) <- "OGC:CRS84"
+    st_warp(img_combined, crs = 3003)
+  },
+  name = "env_var",
+  cache_dir = here("qcache")
+)
+env_var <- env_var[mainland]; invisible(gc) # Subset mainland
+env_var <- aggregate(env_var, max, by = "1 day"); invisible(gc) # Take daily maximum
 ```
 
+```{r}
+#| include: false
+if (exists("img_combined")) {
+  rm(img_combined); invisible(gc())
+}
+```
+
+Now we can replicate the space-time representation of the environmental variables. We start from Surface Pressure
+
+```{r}
+# Subset the surface pressure data and build the palette
+sp_2months <- aggregate(
+  env_var["sp", ], 
+  mean, 
+  by = "2 months", 
+  na.rm = TRUE
+)
+sp_palette <- col_numeric(
+  viridis::turbo(15), 
+  domain = sp_2months$sp |> as.vector() |> range(na.rm = TRUE)
+)
+```
+
+```{r}
+#| out-width: 70%
+#| fig-align: center
+#| fig-width: 10.5
+#| fig-height: 7.5
+if (!interactive()) {
+  grid.newpage()
+  vp1 <- viewport(
+    x = unit(0.35, "npc"),
+    y = unit(0.35, "npc"),
+    width = unit(0.8, "npc"),
+    height = unit(0.8, "npc")
+  )
+  vp2 <- viewport(
+    x = unit(0.9, "npc"),
+    y = unit(0.35, "npc"),
+    width = unit(0.25, "npc"),
+    height = unit(0.6, "npc")
+  )
+  pushViewport(vp1)
+  w <- 0.74
+  h <- 0.175
+
+  for (time_period in 1:6) {
+    (sp_2months[, time_period, drop = TRUE]) |>
+      st_as_sf() -> sp_2months_sf
+    poly_cols <- sp_palette(sp_2months_sf$sp)
+    poly_coords <- sp_2months_sf |>
+      st_geometry() |>
+      st_coordinates()
+    poly_coords[, 1] <- normalize(poly_coords[, 1])
+    poly_coords[, 2] <- normalize(poly_coords[, 2])
+    xy_trans <- tf(poly_coords[, 1], poly_coords[, 2], w = w, h = h)
+    for (i in unique(poly_coords[, 4])) {
+      idx <- which(poly_coords[, 4] == i)
+      grid.polygon(
+        x = xy_trans$x[idx] + 0.075,
+        y = xy_trans$y[idx] + 0.1 + (time_period - 1) * 0.9 / 12,
+        gp = gpar(fill = poly_cols[i], col = NA, alpha = 1)
+      )
+    }
+
+    sicily <- sp_2months_sf |>
+      st_union() |>
+      st_geometry()
+    sicily_coords <- sicily |> st_coordinates()
+    sicily_coords[, 1] <- normalize(sicily_coords[, 1])
+    sicily_coords[, 2] <- normalize(sicily_coords[, 2])
+    xy_trans <- tf(sicily_coords[, 1], sicily_coords[, 2], w = w, h = h)
+    grid.polygon(
+      x = xy_trans$x + 0.075,
+      y = xy_trans$y + 0.1 + (time_period - 1) * 0.9 / 12,
+      gp = gpar(fill = NA, col = "black", lwd = 2)
+    )
+  }
+  grid.text(
+    "Jan-Feb",
+    x = unit(0.15, "npc"),
+    y = unit(0.19, "npc"),
+    gp = gpar(fontsize = 13, fontface = "bold")
+  )
+  grid.text(
+    "Nov-Dec",
+    x = unit(0.15, "npc"),
+    y = unit(0.59, "npc"),
+    gp = gpar(fontsize = 13, fontface = "bold")
+  )
+  grid.text(
+    "Surface Pressure (Pa)",
+    x = unit(0.65, "npc"),
+    y = unit(0.7, "npc"),
+    gp = gpar(fontsize = 20, fontface = "bold")
+  )
+  grid.segments(
+    x0 = unit(0.15, "npc"),
+    x1 = unit(0.15, "npc"),
+    y0 = unit(0.21, "npc"),
+    y1 = unit(0.565, "npc"),
+    gp = gpar(lwd = 2),
+    arrow = arrow()
+  )
+  popViewport()
+  pushViewport(vp2)
+  labels <- seq(88099, 102800, length.out = 5) |> pretty()
+  grid.points(
+    x = unit(rep(0.3, 5), "npc"),
+    y = unit(seq(0.2, 0.6, length.out = 5), "npc"),
+    pch = 21,
+    size = unit(1.5, "char"),
+    gp = gpar(fill = sp_palette(seq(89000, 102000, length.out = 5)))
+  )
+  grid.text(
+    label = labels,
+    x = unit(rep(0.55, 5), "npc"),
+    y = unit(seq(0.2, 0.6, length.out = 5), "npc"),
+    gp = gpar(fontsize = 15, fontface = "bold")
+  )
+}
+```
+
+and then focus on Skin Temperature
+
+```{r}
+stl2_2months <- aggregate(
+  env_var["stl2", ],
+  mean,
+  by = "2 months",
+  na.rm = TRUE
+)
+stl2_2months$stl2 <- stl2_2months$stl2 - 273.15
+
+stl2_palette <- col_numeric(
+  viridis::turbo(15),
+  domain = stl2_2months$stl2 |> as.vector() |> range(na.rm = TRUE)
+)
+```
+
+```{r}
+#| out-width: 70%
+#| fig-align: center
+#| fig-width: 10.5
+#| fig-height: 7.5
+if (!interactive()) {
+  grid.newpage()
+  vp1 <- viewport(
+    x = unit(0.35, "npc"),
+    y = unit(0.35, "npc"),
+    width = unit(0.8, "npc"),
+    height = unit(0.8, "npc")
+  )
+  vp2 <- viewport(
+    x = unit(0.9, "npc"),
+    y = unit(0.35, "npc"),
+    width = unit(0.25, "npc"),
+    height = unit(0.6, "npc")
+  )
+  pushViewport(vp1)
+  w <- 0.74
+  h <- 0.175
+  for (time_period in 1:6) {
+    (stl2_2months[, time_period, drop = TRUE]) |>
+      st_as_sf() -> stl2_2months_sf
+    poly_cols <- stl2_palette(stl2_2months_sf$stl2)
+    poly_coords <- stl2_2months_sf |>
+      st_geometry() |>
+      st_coordinates()
+    poly_coords[, 1] <- normalize(poly_coords[, 1])
+    poly_coords[, 2] <- normalize(poly_coords[, 2])
+    xy_trans <- tf(poly_coords[, 1], poly_coords[, 2], w = w, h = h)
+    for (i in unique(poly_coords[, 4])) {
+      idx <- which(poly_coords[, 4] == i)
+      grid.polygon(
+        x = xy_trans$x[idx] + 0.075,
+        y = xy_trans$y[idx] + 0.1 + (time_period - 1) * 0.9 / 12,
+        gp = gpar(fill = poly_cols[i], col = NA, alpha = 1)
+      )
+    }
+
+    sicily <- stl2_2months_sf |>
+      st_union() |>
+      st_geometry()
+    sicily_coords <- sicily |> st_coordinates()
+    sicily_coords[, 1] <- normalize(sicily_coords[, 1])
+    sicily_coords[, 2] <- normalize(sicily_coords[, 2])
+    xy_trans <- tf(sicily_coords[, 1], sicily_coords[, 2], w = w, h = h)
+    grid.polygon(
+      x = xy_trans$x + 0.075,
+      y = xy_trans$y + 0.1 + (time_period - 1) * 0.9 / 12,
+      gp = gpar(fill = NA, col = "black", lwd = 2)
+    )
+  }
+  grid.text(
+    "Jan-Feb",
+    x = unit(0.15, "npc"),
+    y = unit(0.19, "npc"),
+    gp = gpar(fontsize = 13, fontface = "bold")
+  )
+  grid.text(
+    "Nov-Dec",
+    x = unit(0.15, "npc"),
+    y = unit(0.59, "npc"),
+    gp = gpar(fontsize = 13, fontface = "bold")
+  )
+  grid.text(
+    "Skin Temperature (Celsius)",
+    x = unit(0.65, "npc"),
+    y = unit(0.7, "npc"),
+    gp = gpar(fontsize = 20, fontface = "bold")
+  )
+  grid.segments(
+    x0 = unit(0.15, "npc"),
+    x1 = unit(0.15, "npc"),
+    y0 = unit(0.21, "npc"),
+    y1 = unit(0.565, "npc"),
+    gp = gpar(lwd = 2),
+    arrow = arrow()
+  )
+  popViewport()
+  pushViewport(vp2)
+  labels <- seq(5, 35, length.out = 5) |> pretty()
+  grid.points(
+    x = unit(rep(0.3, 7), "npc"),
+    y = unit(seq(0.1, 0.6, length.out = 7), "npc"),
+    pch = 21,
+    size = unit(1.5, "char"),
+    gp = gpar(fill = stl2_palette(seq(6.5, 33, length.out = 7)))
+  )
+  grid.text(
+    label = labels,
+    x = unit(rep(0.5, 7), "npc"),
+    y = unit(seq(0.1, 0.6, length.out = 7), "npc"),
+    gp = gpar(fontsize = 18, fontface = "bold")
+  )
+}
+```
+
+```{r}
+#| include: false
+rm(env_var, sp_2months, sp_palette, stl2_2months, stl2_palette)
+if (!interactive()) {
+  rm(h, i, idx, labels, poly_cols, poly_coords, sicily, sicily_coords, sp_2months_sf, stl2_2months_sf, time_period, vp1, vp2, w, xy_trans)
+}
+```
+
+## Section 4
+
+### Figure 11
+
+Now we replicate the plots regarding the temporal distribution of some environmental variables. First we need to reload the data (since we modified it to create the previous plot) and adjust its format slightly: 
+
+```{r}
+cov_time <- qcache(
+  {
+    tmp_dir <- tempdir()
+    unzip(here("data", "environmental-variables.zip"), exdir = tmp_dir)
+    nc_files <- list.files(
+      paste0(tmp_dir, "/environmental-variables"),
+      pattern = "\\.nc$",
+      full.names = TRUE
+    )
+
+    nome_file <- c(
+      "january.nc", "february.nc", "march.nc", "april.nc",
+      "may.nc", "june.nc", "july.nc",
+      "august.nc", "september.nc", "october.nc", "november.nc",
+      "december.nc"
+    )
+
+    lista <- list()
+    for (i in nc_files) {
+      k <- which(nome_file == basename(i))
+      suppressMessages({
+        prova <- read_ncdf(i)
+      })
+      st_crs(prova) <- 4326
+      prova <- st_warp(prova, crs = 3003)
+      prova <- prova[mainland]
+
+      if (basename(i) == "october.nc") {
+        prova2 <- aggregate(prova[, , , 2, , drop = TRUE], max, by = "1 day")[, -1] |>
+          st_apply(c("time"), function(z) max(z, na.rm = TRUE))
+      } else {
+        prova2 <- aggregate(prova[, , , ], max, by = "1 day") |>
+          st_apply(c("time"), function(z) max(z, na.rm = TRUE))
+      }
+
+      prova2 <- as.data.frame(prova2)
+      prova2$month <- rep(k, nrow(prova2))
+      prova2$day <- 1:nrow(prova2)
+      lista[[k]] <- prova2
+      rm(prova, prova2)
+      invisible(gc())
+    }
+    rm(nome_file, i, k)
+    unlink(nc_files); rm(nc_files); invisible(gc())
+
+    do.call(rbind, lista)
+  },
+  name = "cov_time",
+  cache_dir = here("qcache")
+)
+```
+
+```{r}
+if (exists("lista")) {
+  rm(lista)
+}
+```
+
+We need to convert Kelvin to Celsius
+
+```{r}
+cov_time$d2m <- cov_time$d2m - 273.15
+cov_time$t2m <- cov_time$t2m - 273.15
+cov_time$skt <- cov_time$skt - 273.15
+cov_time$stl1 <- cov_time$stl1 - 273.15
+cov_time$stl2 <- cov_time$stl2 - 273.15
+cov_time$stl3 <- cov_time$stl3 - 273.15
+cov_time$stl4 <- cov_time$stl4 - 273.15
+```
+
+and now we are ready to plot
+
+```{r}
+#| out-width: 70%
+#| fig-align: center
+#| fig-width: 12
+#| fig-height: 8
+if (!interactive()) {
+  par(mfrow = c(2, 2))
+  plot(
+    cov_time$time, cov_time$u10, type = "l", col = 5, 
+    xlab = "", ylab = "m/s", main = "Wind Speed", lwd = 2
+  )
+  lines(cov_time$time, cov_time$v10, col = 6, lwd = 2)
+  legend("top", legend = c("u10", "v10"), col = c(5, 6), lty = 1, cex = 0.8, lwd = 2)
+  
+  plot(
+    cov_time$time, cov_time$d2m, type = "l", col = 4, 
+    xlab = "", ylab = "Celsius", main = "Temperatures", lwd = 2, 
+    ylim = c(2, 60)
+  )
+  lines(cov_time$time, cov_time$t2m, col = 5, lwd = 2)
+  lines(cov_time$time, cov_time$skt, col = 6, lwd = 2)
+  lines(cov_time$time, cov_time$stl1, col = 7, lwd = 2)
+  lines(cov_time$time, cov_time$stl2, col = 8, lwd = 2)
+  lines(cov_time$time, cov_time$stl3, col = 9, lwd = 2)
+  lines(cov_time$time, cov_time$stl4, col = 10, lwd = 2)
+  legend("topleft", legend=c("d2m", "t2m", "skt", "stl1", "stl2", "stl3", "stl4"),
+       col=c(4:10), lty=1, cex=0.8, lwd = 2)
+  
+  plot(
+    cov_time$time, cov_time$tp, type = "l", col = 4, 
+    xlab = "", ylab = "m", main = "Precipitations", lwd = 2 
+  )
+  
+  plot(
+    cov_time$time, cov_time$sp, type = "l", col = 4, 
+    xlab = "", ylab = "Pa", main = "Surface Pressure", lwd = 2 
+  )
+}
+```
+
+### Figure 12
+
+Next we focus on the pairs plot
+
+```{r pairs_temperature}
+#| out-width: 70%
+#| fig-align: center
+#| fig-width: 12
+#| fig-height: 12
+panel.hist <- function(x, ...)
+{
+  usr <- par("usr")
+  par(usr = c(usr[1:2], 0, 1.5) )
+  h <- hist(x, plot = FALSE)
+  breaks <- h$breaks; nB <- length(breaks)
+  y <- h$counts; y <- y/max(y)
+  rect(breaks[-nB], 0, breaks[-1], y, col = "grey", ...)
+}
+
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...)
+{
+  par(usr = c(0, 1, 0, 1))
+  r <- abs(cor(x, y))
+  txt <- format(c(r, 0.123456789), digits = digits)[1]
+  txt <- paste0(prefix, txt)
+  if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+  text(0.5, 0.5, txt, cex = cex.cor * r)
+}
+if (!interactive()) {
+  pairs(
+    cov_time[,c(2:12)], upper.panel = panel.cor, diag.panel = panel.hist,
+    lower.panel = panel.smooth, pch = "."
+  )
+}
+```
+
+```{r}
+#| include: false
+rm(cov_time, panel.hist, panel.cor)
+```
