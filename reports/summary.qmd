@@ -18,7 +18,7 @@ date: today
 ```{r setup-and-packages}
 #| include: false
 knitr::knit_hooks$set(crop = knitr::hook_pdfcrop)
-options(width = 100, rgl.useNULL = TRUE)
+options(width = 100, rgl.useNULL = TRUE, scipen = 5)
 ```
 
 This document replicates the analyses included in the paper entitled *Non-separable spatio-temporal Poisson point process models for fire occurrences*. 
@@ -2121,3 +2121,291 @@ Check the parameters
 summary(mod_global$mod_global)
 ```
 
+The following can be used to estimate the **local** model: 
+
+```{r}
+mod_local <- qcache(
+  {
+    stppm(
+      X = stp0,
+      formula = ~
+        as.factor(land) + NDVI +
+          +elev + slope
+          + u10 + stl2
+          + tp,
+      dummy_points = dum1,
+      dati.interpolati = covs_complete[3 + c(1, 2, 3, 4, 10, 13, 14, 15)],
+      obsvol = volume0, ncube = 5, nxyt = 87,
+      local = TRUE,
+      verbose = TRUE
+    )
+  },
+  name = "mod_local",
+  cache_dir = here("qcache")
+)
+```
+
+### Figure 13
+
+The parameter estimates for the local model are summarised in the following plot: 
+
+```{r}
+plot_covs_3D <- function(
+    name,
+    bias,
+    main,
+    min = -Inf,
+    max = Inf,
+    val = NA,
+    mod = mod_local) {
+  id <- if (!is.na(val)) {
+    which(mod[["newdata"]][["land"]] == val)
+  } else {
+    seq_len(nrow(mod[["newdata"]]))
+  }
+  colvar <- mod[["IntCoefs_local"]][id, ][[name]]
+  id <- id[between(colvar, min, max)]
+  palette <- rev(colorRampPalette(
+    divergingx_hcl(
+      n = 11, l3 = 0, palette = "RdBu",
+      p3 = 0.8, p4 = 0.6
+    ),
+    bias = bias
+  )(99))
+
+  x <- mod[["X"]][["df"]][["x"]][id]
+  y <- mod[["X"]][["df"]][["y"]][id]
+  t <- mod[["X"]][["df"]][["t"]][id]
+
+  scatter3D(
+    x = x,
+    y = y,
+    z = t,
+    theta = 60,
+    phi = 35,
+    col = palette,
+    ticktype = "detailed",
+    colvar = mod[["IntCoefs_local"]][id, name],
+    xlab = "Easting (Km)",
+    ylab = "Northing (Km)",
+    zlab = "Days from 1st January",
+    main = main
+  )
+}
+```
+
+```{r}
+#| fig-width: 15
+#| fig-height: 15
+#| fig-align: center
+#| crop: true
+#| out-width: 100%
+if (!interactive()) {
+  par(mfrow = c(3, 3))
+  tmp <- mapply(
+    FUN = plot_covs_3D,
+    name = c(
+      "(Intercept)", "as.factor(land)2", "as.factor(land)3", "NDVI", "elev", "slope", "u10", "stl2", "tp"
+    ),
+    bias = c(4, 0.85, 2.7, 5, 1.3, 0.9, 0.9, 0.2, 2.5),
+    main = c(
+      "Urban", "Agricultural Areas", "Forests", "NDVI", "Elevation", "Slope", "Wind Speed", "Temperature", "Precipitation"
+    ),
+    min = c(-55, -1, -Inf, -5, -Inf, -Inf, -0.5, -Inf, -300),
+    max = c(-10, 1.25, 1, -3, 1, Inf, Inf, 0.25, 75),
+    val = c(1L, 2L, 3L, NA, NA, NA, NA, NA, NA)
+  )
+  rm(tmp)
+}
+```
+
+### Figure 14
+
+Global and local estimates of the intensity function: 
+
+```{r}
+#| fig-width: 10.5
+#| fig-height: 8.5
+#| fig-align: center
+#| crop: true
+#| out-width: 70%
+if (!interactive()) {
+  # Intensity global
+  mark_int <- na.omit(mod_global$l)
+  ppp_gl <- ppp(
+    x = mod_global$X$df$x[-attr(mark_int, "na.action")],
+    y = mod_global$X$df$y[-attr(mark_int, "na.action")],
+    marks = mark_int, 
+    window = mainland |> as.owin() |> spatstat.geom::rescale(1000)
+  )
+  int_global <- Smooth(ppp_gl, sigma = OS(unmark(ppp_gl)))
+  
+  mark_int_local <- na.omit(mod_local$l_local)
+  ppp_l <- ppp(
+    x = mod_local$X$df$x[-attr(mark_int_local, "na.action")],
+    y = mod_local$X$df$y[-attr(mark_int_local, "na.action")],
+    marks = mark_int_local, 
+    window = mainland |> as.owin() |> spatstat.geom::rescale(1000)
+  )
+  int_local <- Smooth(ppp_l, sigma = OS(unmark(ppp_l)))
+  int <- solist(int_global, int_local)
+  plot(
+    int, 
+    equal.ribbon = TRUE, 
+    main = "", 
+    col = attr(spatstat.geom::colourmap(
+      grDevices::hcl.colors(100, "Viridis", rev = TRUE),
+      range = range(mark_int, mark_int_local)
+    ),"stuff")$outputs, 
+    main.panel = c("Global", "Local"), 
+    panel.end = unmark(ppp_l), 
+    panel.end.args = list(cex = 0.75)
+  )
+}
+```
+
+```{r}
+#| include: false
+if (!interactive()) {
+  rm(
+    int, int_global, mark_int, mark_int_local, ppp_gl, ppp_l
+  )
+}
+```
+
+### Figure 15
+
+Comparison between the residuals in the global and local model. 
+
+```{r}
+#| warning: false
+# Focus on the mainland
+id1 <- (!(fires_sicily_ppp$x < 1800000 | fires_sicily_ppp$y > 4263000))
+# Remove a few points which displayed numerical problems in the estimate
+id2 <- (
+  mod_local$IntCoefs_local$`tp` > c(-800)
+  | mod_local$IntCoefs_local$`stl2` < c(-0.2)
+)
+# Remove a few points with missing covariates due to numerical inaccuracies in the spatial extraction which implied NA in the estimates of lambda
+id3 <- !is.na(mod_local$l_local)
+id <- which(id1 & id2 & id3)
+
+mod_local$newdata <- mod_local$newdata[id, ]
+
+subset_ppp <- ppp(
+  x = mod_local$newdata$x,
+  y = mod_local$newdata$y,
+  marks = mod_local$newdata$t,
+  window = fires_sicily_ppp$window |> spatstat.geom::rescale(1000)
+)
+# Spatiotemporal kernel intensity
+st_kernel <- spattemp.density(subset_ppp, tres = 128)
+
+# Extract the intensity values. The warnings you might see are simply due to
+# numerical rounding problems at the boundary of the time interval.
+cc <- spattemp.slice(st_kernel, tt = mod_local$newdata$t)$z
+
+cc_dens = mapply(
+  FUN = function(x, y, cc) {
+    cc[list(x = x, y = y)]
+  }, 
+  x = mod_local$newdata$x, 
+  y = mod_local$newdata$y, 
+  cc = cc
+)
+
+# We need to remove such points at the boundary of the time interval
+id_no <- vapply(cc_dens, identical, logical(1), y = numeric(0)) |> which()
+nX <- length(unlist(cc_dens))
+
+dt <- data.frame(
+  pred = c(
+    mod_local$l[id][-id_no], mod_local$l_local[id][-id_no]
+  ), 
+  smo = c(unlist(cc_dens) * nX, unlist(cc_dens) * nX), 
+  type = rep(c("Global", "Local"), each = length(unlist(cc_dens)))
+)
+```
+
+```{r residui-no-pt-neri-proposta2}
+#| fig-width: 10
+#| warning: false
+#| crop: true
+#| fig-align: center
+#| out-width: 80%
+if (!interactive()) {
+  ggplot(dt, aes(x = pred, y = smo)) +
+    geom_point() +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", linewidth = 1, col = 2) +
+    facet_wrap(~type, scales = "free") +
+    scale_x_continuous(transform = "log10") +
+    scale_y_continuous(transform = "log10") +
+    theme_light() +
+    theme(
+      strip.text = element_text(size = 11, colour = "black", face = "bold"),
+      axis.text = element_text(size = 8.5),
+      axis.title = element_text(size = 11.5)
+    ) +
+    labs(x = "Parametric intensity", y = "Kernel intensity")
+}
+```
+
+### Figure 16
+
+Density distribution of the residuals
+
+```{r}
+residui_global <- unlist(cc_dens) * nX - mod_local$l[id][-id_no]
+residui_local <- unlist(cc_dens) * nX - mod_local$l_local[id][-id_no]
+
+residui <- data.frame(
+  residuals = c(residui_global, residui_local),
+  model = rep(c("Global", "Local"), each = length(residui_local))
+)
+```
+
+```{r density-residuals}
+#| fig-width: 10
+#| fig-height: 7
+#| crop: true
+#| fig-align: center
+#| out-width: 80%
+if (!interactive()) {
+  ggplot(data=residui, aes(x=residuals, group=model, fill=model)) + 
+    geom_density(adjust=1.5, alpha=.4) + 
+    theme_minimal() +
+    theme(
+      axis.text = element_text(size = 10)
+    ) + 
+    labs(x = "Residual", y = "Density", fill = "Model Type")
+}
+```
+
+### Figure 17
+
+Spatio-temporal residuals of the local model: 
+
+```{r residui-local-3D}
+#| crop: true
+#| fig-align: center
+#| out-width: 80%
+#| fig-width: 10
+#| fig-height: 10
+color_palette_on_zero <- rev(colorRampPalette(divergingx_hcl(
+  n = 11, l3 = 0,
+  palette = "RdBu",
+  p3 = 0.8, p4 = 0.6
+), bias = 1.5)(99))
+if (!interactive()) {
+  scatter3D(
+    x = mod_local$newdata$x[-id_no],
+    y = mod_local$newdata$y[-id_no],
+    z = mod_local$newdata$t[-id_no],
+    col = color_palette_on_zero,
+    theta = 60, phi = 35,
+    colvar = residui_local, 
+    ticktype = "detailed", 
+    xlab = "Northing (Km)", ylab = "Easting (Km)", zlab = "Days from January 1st"
+  )
+}
+```
