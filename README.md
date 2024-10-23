@@ -20,7 +20,7 @@ We used the `R` software and the following contributed packages:
      collate  English_United Kingdom.utf8
      ctype    English_United Kingdom.utf8
      tz       Europe/Rome
-     date     2024-10-20
+     date     2024-10-22
      pandoc   3.2 @ C:/Program Files/RStudio/resources/app/bin/quarto/bin/tools/ (via rmarkdown)
 
     ─ Packages ───────────────────────────────────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ We used the `R` software and the following contributed packages:
      lubridate        * 1.9.3      2023-09-27 [1] CRAN (R 4.3.1)
      mgcv             * 1.9-1      2023-12-21 [1] CRAN (R 4.3.1)
      nlme             * 3.1-162    2023-01-31 [2] CRAN (R 4.3.1)
-     piggyback        * 0.1.5      2023-07-10 [1] CRAN (R 4.3.1)
+     piggyback        * 0.1.5.9005 2024-10-22 [1] Github (ropensci/piggyback@da84484)
      plot3D           * 1.4.1      2024-02-06 [1] CRAN (R 4.3.1)
      purrr            * 1.0.2      2023-08-10 [1] CRAN (R 4.3.1)
      qs               * 0.27.2     2024-10-01 [1] CRAN (R 4.3.1)

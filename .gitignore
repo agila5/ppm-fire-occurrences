@@ -5,6 +5,7 @@
 _targets/
 _targets.yaml
 data/
+qcache/
 
 # Ignore all directories ending with _cache
 **/*_cache/
