@@ -1,0 +1,1949 @@
+# Load packages
+library(here)
+options(width = 100, rgl.useNULL = TRUE, scipen = 5)
+source(here("R", "packages.R"))
+
+# Setup data
+if (!dir.exists(here("data"))) {
+  dir.create(here("data"))
+}
+data_names <- c(
+  "DL_FIRE_J1V-C2_510187.zip", "confini-regioni.zip", "land-use.zip", "NDVI.zip",
+  "environmental-variables.zip", "INGV-elev.zip"
+)
+data_paths <- here("data", data_names)
+if (!all(file.exists(data_paths))) {
+  pb_download(
+    file = data_names,
+    dest = here("data"),
+    repo = "agila5/ppm-fire-occurrences",
+    tag = "v1-data",
+    overwrite = TRUE,
+    show_progress = FALSE
+  )
+}
+rm(data_names, data_paths)
+
+# Setup cache dir
+if (!dir.exists(here("qcache"))) {
+  dir.create(here("qcache"))
+}
+
+qcache_names <- c(
+  "slope.qs", "NDVI_tidy.qs", "NDVI_tidy_agg_1month.qs", "NDVI_raw.qs", "NDVI_and_landuse.qs", "land_use_tidy.qs", "land_use_tidy_union.qs", "env_var.qs", "elev.qs", "cov_time.qs"
+)
+qcache_paths <- here("qcache", qcache_names)
+if (!all(file.exists(qcache_paths))) {
+  pb_download(
+    file = qcache_names,
+    dest = here("qcache"),
+    repo = "agila5/ppm-fire-occurrences",
+    tag = "v1-data",
+    overwrite = TRUE,
+    show_progress = FALSE
+  )
+}
+rm(qcache_names, qcache_paths)
+
+# Define bounding box for plots
+define_bb <- function(
+    xmin,
+    ymin,
+    xmax,
+    ymax,
+    crs) {
+  bbox <- st_bbox(
+    c(xmin = xmin, ymin = ymin, xmax = xmax, ymax = ymax),
+    crs = crs
+  ) |> st_as_sfc()
+
+  if (st_crs(bbox) == st_crs(3003)) {
+    return(bbox)
+  }
+  st_transform(bbox, 3003)
+}
+
+pantelleria_bbox <- define_bb(
+  xmin = 11.92586, ymin = 36.73438,
+  xmax = 12.05684, ymax = 36.83939,
+  crs = "OGC:CRS84"
+)
+linosa_bbox <- define_bb(
+  xmin = 12.84838, ymin = 35.85436,
+  xmax = 12.88393, ymax = 35.87595,
+  crs = "OGC:CRS84"
+)
+lampedusa_bbox <- define_bb(
+  xmin = 12.51730, ymin = 35.49295,
+  xmax = 12.63422, ymax = 35.52931,
+  crs = "OGC:CRS84"
+)
+palermo_bbox <- define_bb(
+  xmin = 1871427, xmax = 1890744,
+  ymin = 4219859, ymax = 4240118,
+  crs = 3003
+)
+sicily_mainland_bbox <- define_bb(
+  xmin = 1807082, ymin = 4041434,
+  xmax = 2083886, ymax = 4265502,
+  crs = 3003
+)
+
+xrange_pantelleria <- st_bbox(pantelleria_bbox)[c(1, 3)]
+xrange_lampedusa <- st_bbox(lampedusa_bbox)[c(1, 3)]
+xrange_linosa <- st_bbox(linosa_bbox)[c(1, 3)]
+
+yrange_pantelleria <- st_bbox(pantelleria_bbox)[c(2, 4)]
+yrange_lampedusa <- st_bbox(lampedusa_bbox)[c(2, 4)]
+yrange_linosa <- st_bbox(linosa_bbox)[c(2, 4)]
+
+# Read-in fire data
+fires_italy <- st_read(
+  paste0("/vsizip/", here("data", "DL_FIRE_J1V-C2_510187.zip")),
+  quiet = TRUE
+) |>
+  st_transform(3003) |>
+  mutate(
+    ACQ_DATETIME = ymd_hm(paste0(ACQ_DATE, " ", ACQ_TIME))
+  )
+
+# Count number of fires in each region
+confini_regioni <- st_read(
+  paste0("/vsizip/", here("data", "confini-regioni.zip"), "/confini-regioni"),
+  quiet = TRUE
+) |>
+  st_transform(3003)
+confini_regioni[["counts"]] <- st_intersects(confini_regioni, fires_italy) |> lengths()
+
+ggplot(data = confini_regioni) +
+  geom_sf(aes(fill = counts)) +
+  scale_fill_continuous_c4a_seq("brewer.oranges") +
+  theme_minimal() +
+  theme(
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 10),
+    legend.key.height = unit(2, "lines")
+  ) +
+  labs(fill = "Fire counts")
+rm(confini_regioni)
+
+# Read-in land use data to define the Window for the fires object 
+land_use_raw <- st_read(
+  paste0("/vsizip/", here("data", "land-use.zip"), "/land-use"), 
+  quiet = TRUE
+)
+
+# Tidy the land use data. NB: qcache set-up a caching system for long running
+# computations. Check ?qcache for more details. 
+land_use_tidy <- qcache(
+  {
+    land_use_raw |>
+      select(Code_18) |>
+      st_transform(crs = 3003) |> # for spatstat
+      st_set_agr(c(Code_18 = "constant")) |> # remove warning on "st_cast"
+      st_cast("POLYGON") |>
+      st_make_valid() |>
+      # Merge together areas with the same macro code
+      mutate(Code_18 = substr(Code_18, 1, 1)) |> # Get the macro code
+      mutate(
+        Code_18 = factor(
+          Code_18,
+          labels = c(
+            "Artificial surfaces",
+            "Agricultural areas",
+            "Forests",
+            "Water bodies",
+            "Water bodies"
+          )
+        )
+      ) |>
+      group_by(Code_18) |>
+      summarise()
+  },
+  name = "land_use_tidy",
+  cache_dir = here("qcache") 
+)
+rm(land_use_raw)
+
+# Convert land_use_tidy into tess format for spatstat
+owins <- lapply(
+    st_geometry(land_use_tidy),
+    as.owin
+  ) |>
+  set_names(
+    land_use_tidy[["Code_18"]]
+  )
+land_use_tess <- tess(tiles = owins); rm(owins)
+
+# Subset fires Italy -> Sicily
+fires_sicily <- fires_italy[
+  Window(land_use_tess) |> st_as_sfc() |> st_set_crs(3003), 
+]
+
+bind_rows(
+  Italy = fires_italy |> st_drop_geometry(), 
+  Sicily = fires_sicily |> st_drop_geometry(), 
+  .id = "ID"
+) |> 
+  group_by(ID, month = month(ACQ_DATETIME, label = TRUE)) |> 
+  count() |> 
+  ggplot(aes(x = month, y = n, fill = ID)) + 
+  geom_col(position = position_dodge(), alpha = 0.75) + 
+  geom_text(aes(label = n), fontface = "bold", vjust = 1.5, position = position_dodge(.9), size = 2) + 
+  scale_fill_manual(values = c("orange", "brown")) + 
+  labs(x = "\n Month", y = "Fire Counts\n", fill = "") + 
+  theme_minimal() + 
+  theme(
+    axis.title = element_text(face = "bold", size = 12)
+  )
+rm(fires_italy)
+
+# Clean the land use data
+land_use_tidy <- land_use_tidy |> 
+  st_set_agr(c(Code_18 = "constant")) |> # remove warning on "st_cast"
+  st_cast("POLYGON")
+land_use_tidy_union <- qcache(
+  {
+    land_use_tidy |> 
+      st_geometry() |> 
+      st_union() |> 
+      st_cast("POLYGON")
+  }, 
+  name = "land_use_tidy_union", 
+  cache_dir = here("qcache")
+)
+
+# Plot the events
+idx_eventi_pantelleria <- st_contains(pantelleria_bbox, fires_sicily) |> unlist()
+idx_eventi_linosa <- st_contains(linosa_bbox, fires_sicily) |> unlist()
+idx_eventi_lampedusa <- st_contains(lampedusa_bbox, fires_sicily) |> unlist()
+  
+idx_shape_pantelleria <- st_intersects(pantelleria_bbox, land_use_tidy_union) |> unlist()
+shape_pantelleria <- land_use_tidy_union[idx_shape_pantelleria]
+
+idx_shape_linosa <- st_intersects(linosa_bbox, land_use_tidy_union) |> unlist()
+shape_linosa <- land_use_tidy_union[idx_shape_linosa]
+
+idx_shape_lampedusa <- st_intersects(lampedusa_bbox, land_use_tidy_union) |> unlist()
+shape_lampedusa <- land_use_tidy_union[idx_shape_lampedusa]
+
+shape_everything_else <- land_use_tidy_union[
+  -c(idx_shape_lampedusa, idx_shape_linosa, idx_shape_pantelleria)
+]
+
+# Main plot
+main_plot <- ggplot() +
+  geom_sf(
+    data = land_use_tidy_union[-c(
+      idx_shape_lampedusa, idx_shape_linosa, idx_shape_pantelleria
+    )]
+  ) +
+  geom_sf(
+    data = fires_sicily[-c(
+      idx_eventi_pantelleria, idx_eventi_linosa, idx_eventi_lampedusa
+    ), ]
+  ) +
+  theme_light() +
+  theme(panel.background = element_rect(fill = "white"), axis.text = element_text(size = 13.5))
+
+inset_region <- ggplot() +
+  geom_sf(data = land_use_tidy_union) +
+  geom_sf(data = lampedusa_bbox |> st_boundary()) +
+  geom_sf(data = linosa_bbox |> st_boundary()) +
+  geom_sf(data = pantelleria_bbox |> st_boundary()) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", linewidth = 3),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.grid = element_blank()
+  )
+
+inset_pantelleria <- ggplot() +
+  geom_sf(data = land_use_tidy_union[idx_shape_pantelleria]) +
+  geom_sf(data = fires_sicily[idx_eventi_pantelleria, ]) +
+  coord_sf(xlim = c(1760070, 1773730), ylim = c(4068772, 4082023)) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", linewidth = 3),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.grid = element_blank()
+  )
+
+inset_linosa <- ggplot() +
+  geom_sf(data = land_use_tidy_union[idx_shape_linosa]) +
+  geom_sf(data = fires_sicily[idx_eventi_linosa, ]) +
+  coord_sf(xlim = c(1846520, 1851748), ylim = c(3973711, 3978066)) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", linewidth = 3),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.grid = element_blank()
+  )
+
+inset_lampedusa <- ggplot() +
+  geom_sf(data = land_use_tidy_union[idx_shape_lampedusa]) +
+  geom_sf(data = fires_sicily[idx_eventi_lampedusa, ]) +
+  coord_sf(xlim = c(1818045, 1830515), ylim = c(3932694, 3938490)) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", linewidth = 3),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.grid = element_blank()
+  )
+
+ggplot() +
+  coord_equal(xlim = c(0, 24), ylim = c(0, 19), expand = FALSE) +
+  annotation_custom(
+    ggplotGrob(main_plot),
+    xmin = 0, xmax = 24, ymin = 0, ymax = 19
+  ) +
+  annotation_custom(
+    ggplotGrob(inset_region),
+    xmin = 1.5, xmax = 7, ymin = 12.5, ymax = 18
+  ) +
+  annotation_custom(
+    ggplotGrob(inset_pantelleria),
+    xmin = 2, xmax = 5, ymin = 2, ymax = 5
+  ) +
+  annotation_custom(
+    ggplotGrob(inset_lampedusa),
+    xmin = 5.75,
+    xmax = 5.75 + 3 * diff(xrange_lampedusa) / diff(xrange_pantelleria),
+    ymin = 2.6,
+    ymax = 2.6 + 5 * diff(yrange_lampedusa) / diff(yrange_pantelleria)
+  ) +
+  annotation_custom(
+    ggplotGrob(inset_linosa),
+    xmin = 9.1,
+    xmax = 9.1 + 3 * diff(xrange_linosa) / diff(xrange_pantelleria),
+    ymin = 3,
+    ymax = 3 + 5 * diff(yrange_linosa) / diff(yrange_pantelleria)
+  ) +
+  annotate(
+    "segment",
+    x = 3.5, y = 5.1,
+    xend = 2.825, yend = 10.2,
+    lineend = "round",
+    linewidth = 1
+  ) +
+  annotate(
+    "segment",
+    x = 2.7, y = 11,
+    xend = 2.25, yend = 14.3,
+    arrow = arrow(),
+    lineend = "round",
+    linewidth = 1
+  ) +
+  annotate(
+    "segment",
+    x = 7.1, y = 4.3,
+    xend = 4.355, yend = 10,
+    lineend = "round",
+    linewidth = 1
+  ) +
+  annotate(
+    "segment",
+    x = 4.05, y = 10.7,
+    xend = 3.1, yend = 12.65,
+    arrow = arrow(),
+    lineend = "round",
+    linewidth = 1,
+  ) +
+  annotate(
+    "segment",
+    x = 9.5, y = 4,
+    xend = 7, yend = 7.75,
+    lineend = "round",
+    linewidth = 1,
+  ) +
+  annotate(
+    "segment",
+    x = 4.85, y = 11,
+    xend = 3.4, yend = 13.2,
+    arrow = arrow(),
+    lineend = "round",
+    linewidth = 1,
+  ) +
+  labs(x = "", y = "") +
+  theme(
+    panel.background = element_rect(fill = "white"),
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+rm(idx_eventi_lampedusa, idx_eventi_linosa, idx_eventi_pantelleria, idx_shape_lampedusa, idx_shape_linosa, idx_shape_pantelleria)
+rm(inset_lampedusa, inset_linosa, inset_pantelleria, inset_region, main_plot)
+
+# Several of the following analyses will focus on the mainland, so we create an
+# sf object for it
+idx_mainland <- which.max(st_area(land_use_tidy_union))
+mainland <- land_use_tidy_union[idx_mainland]; rm(idx_mainland)
+
+# Spatio-temporal distribution of fires
+fires_sicily |>
+  st_filter(mainland) |>
+  mutate(month = month(ACQ_DATETIME, label = TRUE, abbr = FALSE)) |>
+  ggplot() +
+  geom_sf(data = mainland) +
+  geom_sf() +
+  facet_wrap(~month) +
+  theme_light() +
+  scale_x_continuous(breaks = c(12.5, 13.5, 14.5, 15.5)) +
+  theme(
+    strip.text = element_text(face = "bold", colour = "black")
+  )
+
+idx_pantelleria <- st_intersects(pantelleria_bbox, land_use_tidy) |> unlist()
+idx_linosa <- st_intersects(linosa_bbox, land_use_tidy) |> unlist()
+idx_lampedusa <- st_intersects(lampedusa_bbox, land_use_tidy) |> unlist()
+land_use_palermo <- st_intersection(land_use_tidy, palermo_bbox)
+
+# Plot land use
+mainland_plot <- ggplot() +
+  geom_sf(
+    data = land_use_tidy[-c(
+      idx_lampedusa, idx_linosa, idx_pantelleria
+    ), ],
+    aes(fill = Code_18)
+  ) +
+  geom_sf(
+    data = st_boundary(palermo_bbox),
+    linewidth = 1
+  ) +
+  theme_light() +
+  scale_fill_manual(
+    values = c(
+      "Artificial surfaces" = "#a50000",
+      "Agricultural areas" = "#e49703",
+      "Forests" = "#287201",
+      "Water bodies" = "#bdeafe"
+    )
+  ) +
+  theme(
+    axis.text = element_text(size = 13.5),
+    legend.text = element_text(size = 15),
+    plot.title = element_text(face = "bold", size = 18, hjust = 0.5)
+  ) +
+  labs(fill = "", title = "Land usage")
+
+palermo_zoom <- ggplot() +
+  geom_sf(
+    data = land_use_palermo,
+    aes(fill = Code_18),
+    show.legend = FALSE
+  ) +
+  geom_sf(
+    data = st_boundary(palermo_bbox),
+    linewidth = 1.5
+  ) +
+  theme_light() +
+  coord_sf(datum = st_crs(3003)) +
+  scale_fill_manual(
+    values = c(
+      "Artificial surfaces" = "#a50000",
+      "Agricultural areas" = "#e49703",
+      "Forests" = "#287201",
+      "Water bodies" = "#bdeafe"
+    )
+  ) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", colour = NA),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.grid = element_blank()
+  )
+
+pantelleria_zoom <- ggplot() +
+  geom_sf(
+    data = land_use_tidy[idx_pantelleria, ] |> st_transform(4326),
+    aes(fill = Code_18),
+    show.legend = FALSE
+  ) +
+  geom_sf(
+    data = st_boundary(land_use_tidy_union[pantelleria_bbox, ]),
+    linewidth = 1
+  ) +
+  theme_light() +
+  scale_fill_manual(
+    values = c(
+      "Artificial surfaces" = "#a50000",
+      "Agricultural areas" = "#e49703",
+      "Forests" = "#287201",
+      "Water bodies" = "#bdeafe"
+    )
+  ) +
+  theme(
+    panel.border = element_rect(fill = NA, linewidth = 2, colour = "black"),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    panel.grid = element_blank()
+  )
+
+lampedusa_zoom <- ggplot() +
+  geom_sf(
+    data = land_use_tidy[idx_lampedusa, ] |> st_transform(4326),
+    aes(fill = Code_18),
+    show.legend = FALSE
+  ) +
+  geom_sf(
+    data = st_boundary(land_use_tidy_union[lampedusa_bbox, ]),
+    linewidth = 1
+  ) +
+  theme_light() +
+  scale_fill_manual(
+    values = c(
+      "Artificial surfaces" = "#a50000",
+      "Agricultural areas" = "#e49703",
+      "Forests" = "#287201",
+      "Water bodies" = "#bdeafe"
+    )
+  ) +
+  theme(
+    panel.border = element_rect(fill = NA, linewidth = 2, colour = "black"),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    panel.grid = element_blank()
+  )
+
+linosa_zoom <- ggplot() +
+  geom_sf(
+    data = land_use_tidy[idx_linosa, ] |> st_transform(4326),
+    aes(fill = Code_18),
+    show.legend = FALSE
+  ) +
+  geom_sf(
+    data = st_boundary(land_use_tidy_union[linosa_bbox, ]),
+    linewidth = 1
+  ) +
+  theme_light() +
+  scale_fill_manual(
+    values = c(
+      "Artificial surfaces" = "#a50000",
+      "Agricultural areas" = "#e49703",
+      "Forests" = "#287201",
+      "Water bodies" = "#bdeafe"
+    )
+  ) +
+  theme(
+    panel.border = element_rect(fill = NA, linewidth = 1, colour = "black"),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    panel.grid = element_blank()
+  )
+
+ggplot() +
+  coord_equal(xlim = c(0, 24), ylim = c(0, 20), expand = FALSE) +
+  annotation_custom(
+    ggplotGrob(mainland_plot),
+    xmin = 0, xmax = 24, ymin = 0, ymax = 20
+  ) +
+  annotation_custom(
+    ggplotGrob(palermo_zoom),
+    xmin = 1.8, xmax = 6, ymin = 12.15, ymax = 16.65
+  ) +
+  annotation_custom(
+    ggplotGrob(pantelleria_zoom),
+    xmin = 2, xmax = 5, ymin = 4, ymax = 7
+  ) +
+  annotation_custom(
+    ggplotGrob(lampedusa_zoom),
+    xmin = 5.25, xmax = 5.25 + 3 * diff(xrange_lampedusa) / diff(xrange_pantelleria),
+    ymin = 4.6, ymax = 4.6 + 5 * diff(yrange_lampedusa) / diff(yrange_pantelleria)
+  ) +
+  annotation_custom(
+    ggplotGrob(linosa_zoom),
+    xmin = 8.15, xmax = 8.15 + 3 * diff(xrange_linosa) / diff(xrange_pantelleria),
+    ymin = 5, ymax = 5 + 5 * diff(yrange_linosa) / diff(yrange_pantelleria)
+  ) +
+  annotate(
+    "segment",
+    x = 6, y = 14.75,
+    xend = 8, yend = 12.75,
+    arrow = arrow(),
+    lineend = "round",
+    linewidth = 1,
+  ) +
+  theme(
+    panel.background = element_rect(fill = "white"),
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  ) +
+  labs(x = "", y = "")
+
+rm(land_use_palermo, idx_lampedusa, idx_linosa, idx_pantelleria)
+rm(lampedusa_zoom, linosa_zoom, mainland_plot, palermo_zoom, pantelleria_zoom)
+
+# Visualise Horn Algorithm
+horn_grid <- st_make_grid(
+  cellsize = c(1, 1), offset = c(0, 0), n = c(3, 3)
+)
+ggplot() +
+  geom_sf(
+    data = horn_grid[5],
+    fill = grey(0.85)
+  ) +
+  geom_sf(data = st_boundary(horn_grid), linewidth = 1) +
+  geom_sf_text(
+    data = st_centroid(horn_grid),
+    label = c( # NB: The grid is specified in reverse order
+      "Alt[3]", "Alt[4]", "Alt[5]",
+      "Alt[2]", "", "Alt[6]",
+      "Alt[1]", "Alt[8]", "Alt[7]"
+    ),
+    parse = TRUE,
+    size = 13,
+    fontface = "bold"
+  ) +
+  labs(x = "Longitude", y = "Latitude") +
+  theme(
+    panel.background = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_text(size = 40, face = "bold")
+  )
+rm(horn_grid)
+
+# The following function will be used to read the .tif data on elevation
+generate_orig_tif <- function(paths, tmp_dir) {
+  unzip(paths, exdir = tmp_dir)
+  tif_paths <- list.files(
+    tmp_dir, pattern = "\\.tif", recursive = TRUE, 
+    full.names = TRUE
+  )
+  tifs <- lapply(tif_paths, read_stars)
+  out <- do.call(st_mosaic, tifs); invisible(gc())
+  out
+}
+
+elev <- qcache(
+  {
+    tmp_dir <- tempdir()
+    orig_tif <- generate_orig_tif(here("data", "INGV-elev.zip"), tmp_dir)
+    # Clean files
+    unlink(paste0(tmp_dir, "INGV-elev"), recursive = TRUE)
+    invisible(gc())
+    tif <- orig_tif |>
+      st_downsample(n = c(10, 10)) |>
+      st_warp(crs = 3003)
+    # Clean files
+    unlink(list.files(tmp_dir, pattern = "\\.tif", full.names = TRUE))
+    rm(orig_tif)
+    invisible(gc())
+
+    tif <- tif[st_bbox(land_use_tidy_union)]
+    tif[land_use_tidy_union]
+  },
+  name = "elev",
+  cache_dir = here("qcache")
+)
+invisible(gc())
+if (exists("tif")) {
+  rm(tif)
+}
+
+# Plot elevation
+elev_mainland <- (elev |> st_downsample(c(5, 5)))[shape_everything_else]
+elev_pantelleria <- elev[shape_pantelleria]
+elev_lampedusa <- elev[shape_lampedusa]
+elev_linosa <- elev[shape_linosa]
+
+elev_mainplot <- ggplot() +
+  geom_sf(
+    aes(fill = e41005_s10.tif),
+    data = elev_mainland |> st_as_sf(),
+    linewidth = NA
+  ) +
+  theme_light() +
+  scale_fill_gradientn(
+    breaks = c(0, 500, 1000, 2000, 3000),
+    colours = terrain.colors(100),
+    trans = modulus_trans(p = 0.8)
+  ) +
+  theme(
+    axis.text = element_text(size = 19.5),
+    legend.text = element_text(size = 19.5),
+    legend.key.height = unit(3, "lines"),
+    plot.title = element_text(face = "bold", size = 26, hjust = 0.5)
+  ) +
+  labs(fill = "", title = "Altitude (m)")
+
+elev_pantelleria_plot <- ggplot() +
+  geom_stars(data = elev_pantelleria |> st_warp(crs = 4326), na.action = na.omit, show.legend = FALSE) +
+  coord_sf(crs = 4326) +
+  scale_fill_gradientn(colours = terrain.colors(100), trans = modulus_trans(p = 0.8), limits = c(0, 3000)) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", linewidth = 3),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.grid = element_blank()
+  )
+
+elev_lampedusa_plot <- ggplot() +
+  geom_stars(
+    data = elev_lampedusa |>
+      st_warp(crs = 4326),
+    na.action = na.omit,
+    show.legend = FALSE
+  ) +
+  coord_sf(crs = 4326) +
+  scale_fill_gradientn(colours = terrain.colors(100), trans = modulus_trans(p = 0.7), limits = c(0, 3000)) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", linewidth = 3),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.grid = element_blank()
+  )
+
+elev_linosa_plot <- ggplot() +
+  geom_stars(
+    data = elev_linosa |>
+      st_warp(crs = 4326),
+    na.action = na.omit,
+    show.legend = FALSE
+  ) +
+  coord_sf(crs = 4326) +
+  scale_fill_gradientn(colours = terrain.colors(100), trans = modulus_trans(p = 0.7), limits = c(0, 3000)) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", linewidth = 2),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.grid = element_blank()
+  )
+
+ggplot() +
+  coord_equal(xlim = c(0, 24), ylim = c(0, 20), expand = FALSE) +
+  annotation_custom(
+    ggplotGrob(elev_mainplot),
+    xmin = 0, xmax = 24, ymin = 0, ymax = 20
+  ) +
+  annotation_custom(
+    ggplotGrob(elev_pantelleria_plot),
+    xmin = 2.5, xmax = 5.5, ymin = 3.15, ymax = 6.15
+  ) +
+  annotation_custom(
+    ggplotGrob(elev_lampedusa_plot),
+    xmin = 6.25, xmax = 6.25 + 3 * diff(xrange_lampedusa) / diff(xrange_pantelleria),
+    ymin = 3.8, ymax = 3.8 + 3 * diff(yrange_lampedusa) / diff(yrange_pantelleria)
+  ) +
+  annotation_custom(
+    ggplotGrob(elev_linosa_plot),
+    xmin = 9.5, xmax = 9.5 + 3 * diff(xrange_linosa) / diff(xrange_pantelleria),
+    ymin = 4.2, ymax = 4.2 + 3 * diff(yrange_linosa) / diff(yrange_pantelleria)
+  ) +
+  theme(panel.background = element_rect(fill = "white"))
+rm(elev_lampedusa, elev_linosa, elev_mainland, elev_pantelleria)
+rm(elev_mainplot, elev_pantelleria_plot, elev_lampedusa_plot, elev_linosa_plot)
+
+# Compute slope from elevation
+slope <- qcache(
+  {
+    tmp_dir <- tempdir()
+    orig_tif <- generate_orig_tif(here("data", "INGV-elev.zip"), tmp_dir)
+    unlink(paste0(tmp_dir, "INGV-elev"), recursive = TRUE)
+    invisible(gc())
+    
+    temp_tif <- tempfile(fileext = ".tif")
+    write_stars(orig_tif, temp_tif, progress = FALSE)
+    
+    temp_slope <- tempfile(fileext = ".tif")
+    gdaldem("slope", temp_tif, temp_slope)
+    slope <- read_stars(temp_slope)
+    slope <- slope |> st_downsample(c(10, 10)) |> st_warp(crs = 3003)
+    slope <- slope[st_bbox(land_use_tidy_union)]
+    slope <- slope[land_use_tidy_union]
+    
+    unlink(list.files(tmp_dir, pattern = "\\.tif", full.names = TRUE))
+    rm(orig_tif, temp_tif, temp_slope)
+    invisible(gc())
+    slope
+  },
+  name = "slope",
+  cache_dir = here("qcache")
+)
+
+# Plot slope
+slope_mainland <- (slope |> st_downsample(c(5, 5)))[shape_everything_else]
+slope_pantelleria <- slope[shape_pantelleria]
+slope_lampedusa <- slope[shape_lampedusa]
+slope_linosa <- slope[shape_linosa]
+
+slope_mainplot <- ggplot() +
+  geom_sf(
+    aes(fill = value),
+    data = slope_mainland |> st_as_sf() |> setNames(c("value", "geometry")),
+    linewidth = NA
+  ) +
+  theme_light() +
+  scale_fill_gradientn(
+    colours = terrain.colors(100),
+    trans = modulus_trans(p = 0.8)
+  ) +
+  theme(
+    axis.text = element_text(size = 19.5),
+    legend.text = element_text(size = 19.5),
+    legend.key.height = unit(3, "lines"),
+    plot.title = element_text(face = "bold", size = 26, hjust = 0.5)
+  ) +
+  labs(fill = "", title = "Slope (°)")
+
+slope_pantelleria_plot <- ggplot() +
+  geom_stars(data = slope_pantelleria |> st_warp(crs = 4326), na.action = na.omit, show.legend = FALSE) +
+  coord_sf(crs = 4326) +
+  scale_fill_gradientn(colours = terrain.colors(100), trans = modulus_trans(p = 0.8), limits = c(0, 80)) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", linewidth = 3),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.grid = element_blank()
+  )
+
+slope_lampedusa_plot <- ggplot() +
+  geom_stars(data = slope_lampedusa |> st_warp(crs = 4326), na.action = na.omit, show.legend = FALSE) +
+  coord_sf(crs = 4326) +
+  scale_fill_gradientn(colours = terrain.colors(100), trans = scales::modulus_trans(p = 0.7), limits = c(0, 80)) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", linewidth = 3),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.grid = element_blank()
+  )
+
+slope_linosa_plot <- ggplot() +
+  geom_stars(data = slope_linosa |> st_warp(crs = 4326), na.action = na.omit, show.legend = FALSE) +
+  coord_sf(crs = 4326) +
+  scale_fill_gradientn(colours = terrain.colors(100), trans = scales::modulus_trans(p = 0.7), limits = c(0, 80)) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", linewidth = 2),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.ticks.length = unit(0, "pt"),
+    plot.margin = margin(0, 0, 0, 0),
+    panel.grid = element_blank()
+  )
+
+ggplot() +
+  coord_equal(xlim = c(0, 24), ylim = c(0, 20), expand = FALSE) +
+  annotation_custom(
+    ggplotGrob(slope_mainplot),
+    xmin = 0, xmax = 24, ymin = 0, ymax = 20
+  ) +
+  annotation_custom(
+    ggplotGrob(slope_pantelleria_plot),
+    xmin = 2.5, xmax = 5.5, ymin = 3.15, ymax = 6.15
+  ) +
+  annotation_custom(
+    ggplotGrob(slope_lampedusa_plot),
+    xmin = 6.25, xmax = 6.25 + 3 * diff(xrange_lampedusa) / diff(xrange_pantelleria),
+    ymin = 3.8, ymax = 3.8 + 3 * diff(yrange_lampedusa) / diff(yrange_pantelleria)
+  ) +
+  annotation_custom(
+    ggplotGrob(slope_linosa_plot),
+    xmin = 9.5, xmax = 9.5 + 3 * diff(xrange_linosa) / diff(xrange_pantelleria),
+    ymin = 4.2, ymax = 4.2 + 3 * diff(yrange_linosa) / diff(yrange_pantelleria)
+  ) +
+  theme(panel.background = element_rect(fill = "white"))
+
+rm(slope_mainland, slope_pantelleria, slope_linosa, slope_lampedusa)
+rm(slope_mainplot, slope_pantelleria_plot, slope_linosa_plot, slope_lampedusa_plot)
+
+# Load NDVI data
+NDVI_raw <- qcache(
+  {
+    tmp_dir <- tempdir()
+    unzip(here("data", "NDVI.zip"), exdir = tmp_dir)
+    files <- list.files(
+      paste0(tmp_dir, "/NDVI"), 
+      pattern = "\\.nc$",
+      full.names = TRUE
+    )
+    # Currently, the structure returned by read_stars is an array with
+    # dimension 1253 x 1116 and 36 attributes (1 for each NDVI in a 10 days
+    # interval). We need to convert it to a 1253 x 1116 x 36 array with 1
+    # attribute. See below (NDVI_tidy).
+    out <- read_stars(files, quiet = TRUE, proxy = FALSE)
+    unlink(paste0(tmp_dir, "/NDVI"), recursive = TRUE)
+    out
+  }, 
+  name = "NDVI_raw", 
+  cache_dir = here("qcache")
+)
+if (exists("files")) {
+  rm(files)
+}
+if (exists("out")) {
+  rm(out)
+}
+
+# The online docs say that the NDVI measurements are shared approximately every
+# 10 days
+day_jan <- c(
+  as.Date("2023-01-01"), as.Date("2023-01-11"), as.Date("2023-01-21")
+)
+
+# The following code is taken from the first vignette of stars package.
+NDVI_tidy <- qcache(
+  {
+    merge(NDVI_raw) |>
+      setNames("NDVI") |>
+      st_set_dimensions(
+        3,
+        values = c(
+          day_jan,
+          day_jan + months(1),
+          day_jan + months(2),
+          day_jan + months(3),
+          day_jan + months(4),
+          day_jan + months(5),
+          day_jan + months(6),
+          day_jan + months(7),
+          day_jan + months(8),
+          day_jan + months(9),
+          day_jan + months(10),
+          day_jan + months(11)
+        ),
+        names = "time"
+      ) |>
+      st_warp(crs = 3003, cellsize = c(500, 500))
+  },
+  name = "NDVI_tidy",
+  cache_dir = here("qcache")
+)
+rm(day_jan)
+invisible(gc())
+
+NDVI_tidy_agg_1month <- qcache(
+  {
+    aggregate(NDVI_tidy, by = "months", FUN = mean)[mainland]
+  },
+  name = "NDVI_tidy_agg_1month",
+  cache_dir = here("qcache")
+)
+
+ggplot() +
+  geom_stars(data = NDVI_tidy_agg_1month, downsample = c(1, 1, 0)) +
+  facet_wrap(~time) +
+  scale_fill_gradient2(
+    low = "#8d5e0b",
+    mid = "#e6e91a",
+    high = "#045b00",
+    midpoint = 0.5,
+    limits = c(-0.08, 0.92),
+    na.value = "lightblue"
+  ) +
+  theme_light() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "lightblue"),
+    strip.text = element_text(face = "bold", size = 13),
+    legend.title = element_text(size = 13),
+    legend.text = element_text(size = 10)
+  )
+rm(NDVI_tidy_agg_1month)
+invisible(gc())
+
+# Relationship between NDVI and landuse
+NDVI_and_landuse <- qcache(
+  {
+    st_warp(
+      NDVI_tidy,
+      st_as_stars(st_bbox(NDVI_tidy), dx = 1500, dy = 1500)
+    ) |>
+      aggregate(
+        by = land_use_tidy |> group_by(Code_18) |> summarise(),
+        FUN = mean,
+        na.rm = TRUE
+      )
+  },
+  name = "NDVI_and_landuse",
+  cache_dir = here("qcache")
+)
+
+NDVI_and_landuse |>
+  st_as_sf() |>
+  mutate(idx = c("Artificial surfaces", "Agricultural areas", "Forests", "Water bodies")) |>
+  st_drop_geometry() |>
+  pivot_longer(!idx, names_to = "date", names_transform = list(
+    date = as.Date
+  )) |>
+  ggplot() +
+  geom_line(aes(x = date, y = value, col = idx, linetype = idx), linewidth = 1.3) +
+  theme_light() +
+  labs(x = "", y = "Average NDVI", linetype = "", col = "")
+rm(NDVI_and_landuse)
+
+# Auxiliary functions
+normalize <- function(x, max = 1) {
+  x <- as.numeric(x)
+  (x - min(x)) / (max(x) - min(x)) * max
+}
+
+# The following function is used to create the space-time representation
+# of the environmental variables. See below. 
+tf = function(x, y, w = .75, h = .33) {
+  x2 = x * w + y * (1 - w)
+  y2 = y * h
+  x2[length(x2) + 1] = x2[1]
+  y2[length(y2) + 1] = y2[1]
+  list(x = x2, y = y2)
+}
+
+
+# Load environmental ERA5 variables
+env_var <- qcache(
+  {
+    tmp_dir <- tempdir()
+    unzip(here("data", "environmental-variables.zip"), exdir = tmp_dir)
+    nc_files <- list.files(
+      paste0(tmp_dir, "/environmental-variables"),
+      pattern = "\\.nc$",
+      full.names = TRUE
+    )
+    img_combined <- lapply(
+      nc_files,
+      function(x, var) {
+        img <- read_ncdf(x, var = var)
+        if (grepl("october.nc", x, fixed = TRUE)) {
+          img <- img[, , , 2, , drop = TRUE]
+        }
+        img
+      },
+      var = c("u10", "v10", "d2m", "t2m", "skt", "stl1", "stl2", "stl3", "stl4", "sp", "tp")
+    ) |>
+      do.call(c, args = _)
+    unlink(nc_files); rm(nc_files); invisible(gc())
+    st_crs(img_combined) <- "OGC:CRS84"
+    st_warp(img_combined, crs = 3003)
+  },
+  name = "env_var",
+  cache_dir = here("qcache")
+)
+env_var <- env_var[mainland]; invisible(gc()) # Subset mainland
+env_var <- aggregate(env_var, max, by = "1 day"); invisible(gc()) # Take daily maximum
+if (exists("img_combined")) {
+  rm(img_combined); invisible(gc())
+}
+
+# Subset the surface pressure data and build the palette
+sp_2months <- aggregate(
+  env_var["sp", ],
+  mean,
+  by = "2 months",
+  na.rm = TRUE
+)
+sp_palette <- col_numeric(
+  viridis::turbo(15),
+  domain = sp_2months$sp |> as.vector() |> range(na.rm = TRUE)
+)
+
+grid.newpage()
+vp1 <- viewport(
+  x = unit(0.35, "npc"),
+  y = unit(0.35, "npc"),
+  width = unit(0.8, "npc"),
+  height = unit(0.8, "npc")
+)
+vp2 <- viewport(
+  x = unit(0.9, "npc"),
+  y = unit(0.35, "npc"),
+  width = unit(0.25, "npc"),
+  height = unit(0.6, "npc")
+)
+pushViewport(vp1)
+w <- 0.74
+h <- 0.175
+
+for (time_period in 1:6) {
+  (sp_2months[, time_period, drop = TRUE]) |>
+    st_as_sf() -> sp_2months_sf
+  poly_cols <- sp_palette(sp_2months_sf$sp)
+  poly_coords <- sp_2months_sf |>
+    st_geometry() |>
+    st_coordinates()
+  poly_coords[, 1] <- normalize(poly_coords[, 1])
+  poly_coords[, 2] <- normalize(poly_coords[, 2])
+  xy_trans <- tf(poly_coords[, 1], poly_coords[, 2], w = w, h = h)
+  for (i in unique(poly_coords[, 4])) {
+    idx <- which(poly_coords[, 4] == i)
+    grid.polygon(
+      x = xy_trans$x[idx] + 0.075,
+      y = xy_trans$y[idx] + 0.1 + (time_period - 1) * 0.9 / 12,
+      gp = gpar(fill = poly_cols[i], col = NA, alpha = 1)
+    )
+  }
+
+  sicily <- sp_2months_sf |>
+    st_union() |>
+    st_geometry()
+  sicily_coords <- sicily |> st_coordinates()
+  sicily_coords[, 1] <- normalize(sicily_coords[, 1])
+  sicily_coords[, 2] <- normalize(sicily_coords[, 2])
+  xy_trans <- tf(sicily_coords[, 1], sicily_coords[, 2], w = w, h = h)
+  grid.polygon(
+    x = xy_trans$x + 0.075,
+    y = xy_trans$y + 0.1 + (time_period - 1) * 0.9 / 12,
+    gp = gpar(fill = NA, col = "black", lwd = 2)
+  )
+}
+grid.text(
+  "Jan-Feb",
+  x = unit(0.15, "npc"),
+  y = unit(0.19, "npc"),
+  gp = gpar(fontsize = 13, fontface = "bold")
+)
+grid.text(
+  "Nov-Dec",
+  x = unit(0.15, "npc"),
+  y = unit(0.59, "npc"),
+  gp = gpar(fontsize = 13, fontface = "bold")
+)
+grid.text(
+  "Surface Pressure (Pa)",
+  x = unit(0.65, "npc"),
+  y = unit(0.7, "npc"),
+  gp = gpar(fontsize = 20, fontface = "bold")
+)
+grid.segments(
+  x0 = unit(0.15, "npc"),
+  x1 = unit(0.15, "npc"),
+  y0 = unit(0.21, "npc"),
+  y1 = unit(0.565, "npc"),
+  gp = gpar(lwd = 2),
+  arrow = arrow()
+)
+popViewport()
+pushViewport(vp2)
+labels <- seq(88099, 102800, length.out = 5) |> pretty()
+grid.points(
+  x = unit(rep(0.3, 5), "npc"),
+  y = unit(seq(0.2, 0.6, length.out = 5), "npc"),
+  pch = 21,
+  size = unit(1.5, "char"),
+  gp = gpar(fill = sp_palette(seq(89000, 102000, length.out = 5)))
+)
+grid.text(
+  label = labels,
+  x = unit(rep(0.55, 5), "npc"),
+  y = unit(seq(0.2, 0.6, length.out = 5), "npc"),
+  gp = gpar(fontsize = 15, fontface = "bold")
+)
+
+# Repeat for skin temperature
+stl2_2months <- aggregate(
+  env_var["stl2", ],
+  mean,
+  by = "2 months",
+  na.rm = TRUE
+)
+stl2_2months$stl2 <- stl2_2months$stl2 - 273.15
+
+stl2_palette <- col_numeric(
+  viridis::turbo(15),
+  domain = stl2_2months$stl2 |> as.vector() |> range(na.rm = TRUE)
+)
+
+grid.newpage()
+vp1 <- viewport(
+  x = unit(0.35, "npc"),
+  y = unit(0.35, "npc"),
+  width = unit(0.8, "npc"),
+  height = unit(0.8, "npc")
+)
+vp2 <- viewport(
+  x = unit(0.9, "npc"),
+  y = unit(0.35, "npc"),
+  width = unit(0.25, "npc"),
+  height = unit(0.6, "npc")
+)
+pushViewport(vp1)
+w <- 0.74
+h <- 0.175
+for (time_period in 1:6) {
+  (stl2_2months[, time_period, drop = TRUE]) |>
+    st_as_sf() -> stl2_2months_sf
+  poly_cols <- stl2_palette(stl2_2months_sf$stl2)
+  poly_coords <- stl2_2months_sf |>
+    st_geometry() |>
+    st_coordinates()
+  poly_coords[, 1] <- normalize(poly_coords[, 1])
+  poly_coords[, 2] <- normalize(poly_coords[, 2])
+  xy_trans <- tf(poly_coords[, 1], poly_coords[, 2], w = w, h = h)
+  for (i in unique(poly_coords[, 4])) {
+    idx <- which(poly_coords[, 4] == i)
+    grid.polygon(
+      x = xy_trans$x[idx] + 0.075,
+      y = xy_trans$y[idx] + 0.1 + (time_period - 1) * 0.9 / 12,
+      gp = gpar(fill = poly_cols[i], col = NA, alpha = 1)
+    )
+  }
+
+  sicily <- stl2_2months_sf |>
+    st_union() |>
+    st_geometry()
+  sicily_coords <- sicily |> st_coordinates()
+  sicily_coords[, 1] <- normalize(sicily_coords[, 1])
+  sicily_coords[, 2] <- normalize(sicily_coords[, 2])
+  xy_trans <- tf(sicily_coords[, 1], sicily_coords[, 2], w = w, h = h)
+  grid.polygon(
+    x = xy_trans$x + 0.075,
+    y = xy_trans$y + 0.1 + (time_period - 1) * 0.9 / 12,
+    gp = gpar(fill = NA, col = "black", lwd = 2)
+  )
+}
+grid.text(
+  "Jan-Feb",
+  x = unit(0.15, "npc"),
+  y = unit(0.19, "npc"),
+  gp = gpar(fontsize = 13, fontface = "bold")
+)
+grid.text(
+  "Nov-Dec",
+  x = unit(0.15, "npc"),
+  y = unit(0.59, "npc"),
+  gp = gpar(fontsize = 13, fontface = "bold")
+)
+grid.text(
+  "Skin Temperature (Celsius)",
+  x = unit(0.65, "npc"),
+  y = unit(0.7, "npc"),
+  gp = gpar(fontsize = 20, fontface = "bold")
+)
+grid.segments(
+  x0 = unit(0.15, "npc"),
+  x1 = unit(0.15, "npc"),
+  y0 = unit(0.21, "npc"),
+  y1 = unit(0.565, "npc"),
+  gp = gpar(lwd = 2),
+  arrow = arrow()
+)
+popViewport()
+pushViewport(vp2)
+labels <- seq(5, 35, length.out = 5) |> pretty()
+grid.points(
+  x = unit(rep(0.3, 7), "npc"),
+  y = unit(seq(0.1, 0.6, length.out = 7), "npc"),
+  pch = 21,
+  size = unit(1.5, "char"),
+  gp = gpar(fill = stl2_palette(seq(6.5, 33, length.out = 7)))
+)
+grid.text(
+  label = labels,
+  x = unit(rep(0.5, 7), "npc"),
+  y = unit(seq(0.1, 0.6, length.out = 7), "npc"),
+  gp = gpar(fontsize = 18, fontface = "bold")
+)
+
+rm(env_var, sp_2months, sp_palette, stl2_2months, stl2_palette)
+rm(h, i, idx, labels, poly_cols, poly_coords, sicily, sicily_coords, sp_2months_sf, stl2_2months_sf, time_period, vp1, vp2, w, xy_trans)
+
+# Create max and pairs plot. Reload the data since we need a slightly different
+# format.
+cov_time <- qcache(
+  {
+    tmp_dir <- tempdir()
+    unzip(here("data", "environmental-variables.zip"), exdir = tmp_dir)
+    nc_files <- list.files(
+      paste0(tmp_dir, "/environmental-variables"),
+      pattern = "\\.nc$",
+      full.names = TRUE
+    )
+
+    nome_file <- c(
+      "january.nc", "february.nc", "march.nc", "april.nc",
+      "may.nc", "june.nc", "july.nc",
+      "august.nc", "september.nc", "october.nc", "november.nc",
+      "december.nc"
+    )
+
+    lista <- list()
+    for (i in nc_files) {
+      k <- which(nome_file == basename(i))
+      suppressMessages({
+        prova <- read_ncdf(i)
+      })
+      st_crs(prova) <- 4326
+      prova <- st_warp(prova, crs = 3003)
+      prova <- prova[mainland]
+
+      if (basename(i) == "october.nc") {
+        prova2 <- aggregate(prova[, , , 2, , drop = TRUE], max, by = "1 day")[, -1] |>
+          st_apply(c("time"), function(z) max(z, na.rm = TRUE))
+      } else {
+        prova2 <- aggregate(prova[, , , ], max, by = "1 day") |>
+          st_apply(c("time"), function(z) max(z, na.rm = TRUE))
+      }
+
+      prova2 <- as.data.frame(prova2)
+      prova2$month <- rep(k, nrow(prova2))
+      prova2$day <- 1:nrow(prova2)
+      lista[[k]] <- prova2
+      rm(prova, prova2)
+      invisible(gc())
+    }
+    rm(nome_file, i, k)
+    unlink(nc_files)
+    rm(nc_files)
+    invisible(gc())
+
+    do.call(rbind, lista)
+  },
+  name = "cov_time",
+  cache_dir = here("qcache")
+)
+if (exists("lista")) {
+  rm(lista)
+}
+
+cov_time$d2m <- cov_time$d2m - 273.15
+cov_time$t2m <- cov_time$t2m - 273.15
+cov_time$skt <- cov_time$skt - 273.15
+cov_time$stl1 <- cov_time$stl1 - 273.15
+cov_time$stl2 <- cov_time$stl2 - 273.15
+cov_time$stl3 <- cov_time$stl3 - 273.15
+cov_time$stl4 <- cov_time$stl4 - 273.15
+
+par(mfrow = c(2, 2))
+plot(
+  cov_time$time, cov_time$u10,
+  type = "l", col = 5,
+  xlab = "", ylab = "m/s", main = "Wind Speed", lwd = 2
+)
+lines(cov_time$time, cov_time$v10, col = 6, lwd = 2)
+legend("top", legend = c("u10", "v10"), col = c(5, 6), lty = 1, cex = 0.8, lwd = 2)
+
+plot(
+  cov_time$time, cov_time$d2m,
+  type = "l", col = 4,
+  xlab = "", ylab = "Celsius", main = "Temperatures", lwd = 2,
+  ylim = c(2, 60)
+)
+lines(cov_time$time, cov_time$t2m, col = 5, lwd = 2)
+lines(cov_time$time, cov_time$skt, col = 6, lwd = 2)
+lines(cov_time$time, cov_time$stl1, col = 7, lwd = 2)
+lines(cov_time$time, cov_time$stl2, col = 8, lwd = 2)
+lines(cov_time$time, cov_time$stl3, col = 9, lwd = 2)
+lines(cov_time$time, cov_time$stl4, col = 10, lwd = 2)
+legend("topleft",
+  legend = c("d2m", "t2m", "skt", "stl1", "stl2", "stl3", "stl4"),
+  col = c(4:10), lty = 1, cex = 0.8, lwd = 2
+)
+
+plot(
+  cov_time$time, cov_time$tp,
+  type = "l", col = 4,
+  xlab = "", ylab = "m", main = "Precipitations", lwd = 2
+)
+
+plot(
+  cov_time$time, cov_time$sp,
+  type = "l", col = 4,
+  xlab = "", ylab = "Pa", main = "Surface Pressure", lwd = 2
+)
+
+panel.hist <- function(x, ...) {
+  usr <- par("usr")
+  par(usr = c(usr[1:2], 0, 1.5))
+  h <- hist(x, plot = FALSE)
+  breaks <- h$breaks
+  nB <- length(breaks)
+  y <- h$counts
+  y <- y / max(y)
+  rect(breaks[-nB], 0, breaks[-1], y, col = "grey", ...)
+}
+
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...) {
+  par(usr = c(0, 1, 0, 1))
+  r <- abs(cor(x, y))
+  txt <- format(c(r, 0.123456789), digits = digits)[1]
+  txt <- paste0(prefix, txt)
+  if (missing(cex.cor)) cex.cor <- 0.8 / strwidth(txt)
+  text(0.5, 0.5, txt, cex = cex.cor * r)
+}
+pairs(
+  cov_time[, c(2:12)],
+  upper.panel = panel.cor, diag.panel = panel.hist,
+  lower.panel = panel.smooth, pch = "."
+)
+rm(cov_time, panel.hist, panel.cor)
+
+# Define data objects for the statistical procedure
+stp_time <- normalize(fires_sicily[["ACQ_DATETIME"]], 364)
+# Observed data
+stp0 <- stp(cbind(st_coordinates(fires_sicily) / 1000, stp_time))
+# Dummy points
+dum1 <- qread(here("qcache", "dum1.qs"))
+
+# Get values of the spatial covariates at the observed and dummy points
+elev_im <- spatstat.geom::rescale(as.im(elev), 1000); rm(elev); invisible(gc())
+slope_im <- spatstat.geom::rescale(as.im(slope), 1000); rm(slope); invisible(gc())
+land_use_f <- as.function(land_use_tess)
+
+covs0_spatial <- qcache(
+  {
+    rbind(
+      cbind(
+        land_use_f(stp0$df$x * 1000, stp0$df$y * 1000),
+        slope_im[list(x = stp0$df$x, y = stp0$df$y), drop = FALSE],
+        elev_im[list(x = stp0$df$x, y = stp0$df$y), drop = FALSE]
+      ),
+      cbind(
+        land_use_f(dum1$x * 1000, dum1$y * 1000),
+        slope_im[list(x = dum1$x, y = dum1$y), drop = FALSE],
+        elev_im[list(x = dum1$x, y = dum1$y), drop = FALSE]
+      )
+    )
+  },
+  name = "covs0_spatial",
+  cache_dir = here("qcache")
+)
+colnames(covs0_spatial) <- c("land", "slope", "elev")
+
+# Get values of the spatio-temporal covariates at the observed and dummy points
+pts_combined <- rbind(stp0$df, dum1) |> setNames(c("x", "y", "time"))
+pts_combined[, c("x", "y")] <- pts_combined[, c("x", "y")] * 1000 # Since we previously converted m to km
+pts_combined <- st_as_sf(pts_combined, coords = c("x", "y"), crs = 3003)
+pts_combined$time <- (as.Date("2023-01-01") + pts_combined$time) |> round_date(unit = "day")
+
+env_var <- qcache(
+  {
+    tmp_dir <- tempdir()
+    unzip(here("data", "environmental-variables.zip"), exdir = tmp_dir)
+    nc_files <- list.files(
+      paste0(tmp_dir, "/environmental-variables"),
+      pattern = "\\.nc$",
+      full.names = TRUE
+    )
+    img_combined <- lapply(
+      nc_files,
+      function(x, var) {
+        img <- read_ncdf(x, var = var)
+        if (grepl("october.nc", x, fixed = TRUE)) {
+          img <- img[, , , 2, , drop = TRUE]
+        }
+        img
+      },
+      var = c("u10", "v10", "d2m", "t2m", "skt", "stl1", "stl2", "stl3", "stl4", "sp", "tp")
+    ) |>
+      do.call(c, args = _)
+    unlink(nc_files); rm(nc_files); invisible(gc())
+    st_crs(img_combined) <- "OGC:CRS84"
+    st_warp(img_combined, crs = 3003)
+  },
+  name = "env_var",
+  cache_dir = here("qcache")
+)
+env_var <- aggregate(env_var, max, by = "1 day")
+invisible(gc())
+
+# The following fixes the temporal dimension also for tz different than ours
+st_dimensions(env_var)[["time"]]$values <- seq.Date(
+  as.Date("2022-12-31"), by = "1 day", length.out = 365
+)
+
+env_cov_st <- st_extract(
+  x = env_var,
+  at = pts_combined,
+  time_column = "time" 
+)
+env_cov_st <- st_drop_geometry(env_cov_st)[, -c(12)]
+
+NDVI_cov_st <- st_extract(
+  x = NDVI_tidy,
+  at = pts_combined |> mutate(time = round_date(time, "month")),
+  time_column = "time",
+)
+
+# Merge all together
+covs_complete <- cbind(
+  x = c(stp0$df$x, dum1$x),
+  y = c(stp0$df$y, dum1$y),
+  t = c(stp0$df$t, dum1$t),
+  covs0_spatial,
+  env_cov_st,
+  NDVI = NDVI_cov_st$NDVI
+)
+covs_complete$elev <- covs_complete$elev / 1000
+
+# Define auxiliary functions for the fitting algorithm
+.counting.weights <- function(id, volumes) {
+  id <- as.integer(id)
+  fid <- factor(id, levels = seq_along(volumes))
+  counts <- table(fid)
+  w <- volumes[id] / counts[id]
+  w <- as.vector(w)
+  names(w) <- NULL
+  return(w)
+}
+
+.default.ncube <- function(X){
+  guess.ngrid <- floor((splancs::npts(X) / 2) ^ (1 / 3))
+  max(5, guess.ngrid)
+}
+
+.grid1.index <- function(x, xrange, nx) {
+  i <- ceiling(nx * (x - xrange[1]) / diff(xrange))
+  i <- pmax.int(1, i)
+  i <- pmin.int(i, nx)
+  i
+}
+
+.grid.index <- function(x, y, t, xrange, yrange, trange, nx, ny, nt) {
+  
+  ix <- .grid1.index(x, xrange, nx)
+  iy <- .grid1.index(y, yrange, ny)
+  it <- .grid1.index(t, trange, nt)
+  
+  return(list(ix = ix, iy = iy, it = it, index = as.integer((iy - 1) * nx + ix + (it - 1) * nx * ny)))
+}
+
+# Define fitting algorithm
+stppm <- function(X, formula, dummy_points, dati.interpolati,
+                  ncube = NULL, obsvol, nxyt = NULL, local = FALSE,
+                  verbose = TRUE) {
+  if (!inherits(X, c("stp", "stpm"))) {
+    stop("x should be either of class stp or stpm")
+  }
+
+  time1 <- Sys.time()
+
+
+  if (!is.null(ncube)) {
+    if (!is.numeric(ncube)) {
+      stop("ncube should be a numeric value")
+    } else {
+      if (ncube <= 0) {
+        stop("ncube should be ncube > 0")
+      }
+    }
+  }
+
+  # X è il processo osservato
+
+  X0 <- X
+  X <- X$df
+
+  nX <- nrow(X)
+
+  x <- X[, 1]
+  y <- X[, 2]
+  t <- X[, 3]
+
+  # definire dummy points come un df con x y e t
+
+  quad_p <- rbind(X[, 1:3], dummy_points)
+
+  xx <- quad_p[, 1]
+  xy <- quad_p[, 2]
+  xt <- quad_p[, 3]
+  win <- spatstat.geom::box3(
+    xrange = range(xx), yrange = range(xy),
+    zrange = range(xt)
+  )
+
+  if (is.null(ncube)) {
+    ncube <- .default.ncube(quad_p)
+  }
+  ncube <- rep.int(ncube, 3)
+  nx <- ncube[1]
+  ny <- ncube[2]
+  nt <- ncube[3]
+
+  if (is.null(nxyt)) nxyt <- nx * ny * nt
+  # cubevolume <-  spatstat.geom::volume(win) / nxyt
+  cubevolume <- obsvol / nxyt
+  volumes <- rep.int(cubevolume, nxyt)
+
+  id <- .grid.index(
+    xx, xy, xt, win$xrange, win$yrange, win$zrange,
+    nx, ny, nt
+  )$index
+
+  w <- .counting.weights(id, volumes)
+
+  Wdat <- w[1:nX]
+  Wdum <- w[-c(1:nX)]
+  ndata <- nrow(X)
+  ndummy <- nrow(dummy_points)
+
+  # dati.interpolati sono i dati delle covariate
+
+  z <- c(rep(1, ndata), rep(0, nrow(dummy_points)))
+  y_resp <- z / w
+  dati.cov.marks <- data.frame(cbind(y_resp, w, quad_p, dati.interpolati))
+
+  suppressWarnings(mod_global <- try(gam(
+    as.formula(paste("y_resp",
+      paste(formula, collapse = " "),
+      sep = " "
+    )),
+    weights = w,
+    family = poisson,
+    data = dati.cov.marks
+  ), silent = T))
+  summary(mod_global)
+  res_global <- coef(mod_global)
+  pred_global <- exp(predict(mod_global, newdata = dati.cov.marks[1:nX, ]))
+
+  if (local) {
+    nU <- dim(quad_p)[1]
+    h_x <- MASS::bandwidth.nrd(x)
+    h_y <- MASS::bandwidth.nrd(y)
+    h_t <- MASS::bandwidth.nrd(t)
+    localwt <- matrix(NA, nrow = nX, ncol = nU)
+    if (verbose) {
+      cat(paste(
+        "\n", "Computing Kernel Densities to the",
+        nX, "points", "\n", "\n"
+      ))
+    }
+    for (j in 1:nX) {
+      if (verbose) {
+        spatstat.geom::progressreport(j, nX)
+      }
+      localwt[j, ] <- dnorm(xx - x[j], sd = h_x) *
+        dnorm(xy - y[j], sd = h_y) * dnorm(xt - t[j], sd = h_t)
+    }
+    a_s <- localwt * w
+    res_local <- matrix(NA, nrow = nX, ncol = length(mod_global$coefficients))
+    pred_local <- vector(length = nX)
+    if (verbose) {
+      cat(paste(
+        "\n", "Fitting local model to the", nX, "points",
+        "\n", "\n"
+      ))
+    }
+    for (i in 1:nX) {
+      if (verbose) {
+        spatstat.geom::progressreport(i, nX)
+      }
+      suppressWarnings(mod_local <- try(glm(as.formula(paste("y_resp",
+        paste(formula, collapse = " "),
+        sep = " "
+      )), weights = a_s[i, ], family = poisson, data = dati.cov.marks), silent = T))
+      res_local[i, ] <- mod_local$coefficients
+      pred_local[i] <- exp(predict(mod_local, newdata = dati.cov.marks[i, ]))
+    }
+    res_local <- as.data.frame(res_local)
+    colnames(res_local) <- names(res_global)
+  }
+
+
+
+  time2 <- Sys.time()
+  if (local) {
+    list.obj <- list(
+      IntCoefs = res_global,
+      IntCoefs_local = res_local,
+      X = X0,
+      nX = ndata,
+      I = z,
+      y_resp = y_resp,
+      formula = formula,
+      l = as.vector(pred_global),
+      l_local = as.vector(pred_local),
+      mod_global = mod_global,
+      newdata = dati.cov.marks[1:ndata, ],
+      ncube = ncube,
+      time = paste0(round(as.numeric(difftime(
+        time1 = time2,
+        time2 = time1,
+        units = "sec"
+      )), 3), " sec")
+    )
+    class(list.obj) <- "locstppm"
+  } else {
+    list.obj <- list(
+      IntCoefs = res_global,
+      X = X0,
+      nX = ndata,
+      I = z,
+      y_resp = y_resp,
+      formula = formula,
+      l = as.vector(pred_global),
+      mod_global = mod_global,
+      newdata = dati.cov.marks[1:ndata, ],
+      ncube = ncube,
+      time = paste0(round(as.numeric(difftime(
+        time1 = time2,
+        time2 = time1,
+        units = "sec"
+      )), 3), " sec")
+    )
+    class(list.obj) <- "stppm"
+  }
+  # class(list.obj) <- "stppm"
+  return(list.obj)
+}
+
+
+# Compute the spatio-temporal volume of the 3D window
+fires_sicily_ppp <- as.ppp(st_geometry(fires_sicily))
+Window(fires_sicily_ppp) <- Window(land_use_tess)
+volume0 <- area(
+  Window(fires_sicily_ppp |> spatstat.geom::rescale(1000))
+) * abs(diff(range(stp0$df$t)))
+
+# Estimate the global model
+mod_global <- stppm(
+  X = stp0,
+  formula = ~
+    as.factor(land) + NDVI +
+      + elev + slope
+      + u10 + stl2
+      + tp,
+  dummy_points = dum1,
+  dati.interpolati = covs_complete[3 + c(1, 2, 3, 4, 10, 13, 14, 15)],
+  obsvol = volume0, ncube = 5, nxyt = 87
+)
+
+summary(mod_global$mod_global)
+
+# Estimate the local model
+mod_local <- qcache(
+  {
+    stppm(
+      X = stp0,
+      formula = ~
+        as.factor(land) + NDVI +
+          +elev + slope
+          + u10 + stl2
+          + tp,
+      dummy_points = dum1,
+      dati.interpolati = covs_complete[3 + c(1, 2, 3, 4, 10, 13, 14, 15)],
+      obsvol = volume0, ncube = 5, nxyt = 87,
+      local = TRUE,
+      verbose = TRUE
+    )
+  },
+  name = "mod_local",
+  cache_dir = here("qcache")
+)
+
+# Visualise the local estimates
+plot_covs_3D <- function(
+    name,
+    bias,
+    main,
+    min = -Inf,
+    max = Inf,
+    val = NA,
+    mod = mod_local) {
+  id <- if (!is.na(val)) {
+    which(mod[["newdata"]][["land"]] == val)
+  } else {
+    seq_len(nrow(mod[["newdata"]]))
+  }
+  colvar <- mod[["IntCoefs_local"]][id, ][[name]]
+  id <- id[between(colvar, min, max)]
+  palette <- rev(colorRampPalette(
+    divergingx_hcl(
+      n = 11, l3 = 0, palette = "RdBu",
+      p3 = 0.8, p4 = 0.6
+    ),
+    bias = bias
+  )(99))
+
+  x <- mod[["X"]][["df"]][["x"]][id]
+  y <- mod[["X"]][["df"]][["y"]][id]
+  t <- mod[["X"]][["df"]][["t"]][id]
+
+  scatter3D(
+    x = x,
+    y = y,
+    z = t,
+    theta = 60,
+    phi = 35,
+    col = palette,
+    ticktype = "detailed",
+    colvar = mod[["IntCoefs_local"]][id, name],
+    xlab = "Easting (Km)",
+    ylab = "Northing (Km)",
+    zlab = "Days from 1st January",
+    main = main
+  )
+}
+par(mfrow = c(3, 3))
+tmp <- mapply(
+  FUN = plot_covs_3D,
+  name = c(
+    "(Intercept)", "as.factor(land)2", "as.factor(land)3", "NDVI", "elev", "slope", "u10", "stl2", "tp"
+  ),
+  bias = c(4, 0.85, 2.7, 5, 1.3, 0.9, 0.9, 0.2, 2.5),
+  main = c(
+    "Urban", "Agricultural Areas", "Forests", "NDVI", "Elevation", "Slope", "Wind Speed", "Temperature", "Precipitation"
+  ),
+  min = c(-55, -1, -Inf, -5, -Inf, -Inf, -0.5, -Inf, -300),
+  max = c(-10, 1.25, 1, -3, 1, Inf, Inf, 0.25, 75),
+  val = c(1L, 2L, 3L, NA, NA, NA, NA, NA, NA)
+)
+rm(tmp)
+
+# Intensity global
+mark_int <- na.omit(mod_global$l)
+ppp_gl <- ppp(
+  x = mod_global$X$df$x[-attr(mark_int, "na.action")],
+  y = mod_global$X$df$y[-attr(mark_int, "na.action")],
+  marks = mark_int,
+  window = mainland |> as.owin() |> spatstat.geom::rescale(1000)
+)
+int_global <- Smooth(ppp_gl, sigma = OS(unmark(ppp_gl)))
+
+mark_int_local <- na.omit(mod_local$l_local)
+ppp_l <- ppp(
+  x = mod_local$X$df$x[-attr(mark_int_local, "na.action")],
+  y = mod_local$X$df$y[-attr(mark_int_local, "na.action")],
+  marks = mark_int_local,
+  window = mainland |> as.owin() |> spatstat.geom::rescale(1000)
+)
+int_local <- Smooth(ppp_l, sigma = OS(unmark(ppp_l)))
+int <- solist(int_global, int_local)
+plot(
+  int,
+  equal.ribbon = TRUE,
+  main = "",
+  col = attr(spatstat.geom::colourmap(
+    grDevices::hcl.colors(100, "Viridis", rev = TRUE),
+    range = range(mark_int, mark_int_local)
+  ), "stuff")$outputs,
+  main.panel = c("Global", "Local"),
+  panel.end = unmark(ppp_l),
+  panel.end.args = list(cex = 0.75)
+)
+rm(int, int_global, mark_int, mark_int_local, ppp_gl, ppp_l)
+
+# Next, we focus on the mainland
+id1 <- (!(fires_sicily_ppp$x < 1800000 | fires_sicily_ppp$y > 4263000))
+# Remove a few points which displayed numerical problems in the estimate
+id2 <- (
+  mod_local$IntCoefs_local$`tp` > c(-800)
+  | mod_local$IntCoefs_local$`stl2` < c(-0.2)
+)
+# Remove a few points with missing covariates due to numerical inaccuracies in the spatial extraction which implied NA in the estimates of lambda
+id3 <- !is.na(mod_local$l_local)
+id <- which(id1 & id2 & id3)
+
+mod_local$newdata <- mod_local$newdata[id, ]
+
+subset_ppp <- ppp(
+  x = mod_local$newdata$x,
+  y = mod_local$newdata$y,
+  marks = mod_local$newdata$t,
+  window = fires_sicily_ppp$window |> spatstat.geom::rescale(1000)
+)
+# Spatiotemporal kernel intensity
+st_kernel <- spattemp.density(subset_ppp, tres = 128)
+
+# Extract the intensity values. The warnings you might see are simply due to
+# numerical rounding problems at the boundary of the time interval.
+cc <- spattemp.slice(st_kernel, tt = mod_local$newdata$t)$z
+
+cc_dens = mapply(
+  FUN = function(x, y, cc) {
+    cc[list(x = x, y = y)]
+  }, 
+  x = mod_local$newdata$x, 
+  y = mod_local$newdata$y, 
+  cc = cc
+)
+
+# We need to remove such points at the boundary of the time interval
+id_no <- vapply(cc_dens, identical, logical(1), y = numeric(0)) |> which()
+nX <- length(unlist(cc_dens))
+
+dt <- data.frame(
+  pred = c(
+    mod_local$l[id][-id_no], mod_local$l_local[id][-id_no]
+  ), 
+  smo = c(unlist(cc_dens) * nX, unlist(cc_dens) * nX), 
+  type = rep(c("Global", "Local"), each = length(unlist(cc_dens)))
+)
+# Residui
+ggplot(dt, aes(x = pred, y = smo)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", linewidth = 1, col = 2) +
+  facet_wrap(~type, scales = "free") +
+  scale_x_continuous(transform = "log10") +
+  scale_y_continuous(transform = "log10") +
+  theme_light() +
+  theme(
+    strip.text = element_text(size = 11, colour = "black", face = "bold"),
+    axis.text = element_text(size = 8.5),
+    axis.title = element_text(size = 11.5)
+  ) +
+  labs(x = "Parametric intensity", y = "Kernel intensity")
+
+residui_global <- unlist(cc_dens) * nX - mod_local$l[id][-id_no]
+residui_local <- unlist(cc_dens) * nX - mod_local$l_local[id][-id_no]
+
+residui <- data.frame(
+  residuals = c(residui_global, residui_local),
+  model = rep(c("Global", "Local"), each = length(residui_local))
+)
+
+# Density of the residuals
+ggplot(data = residui, aes(x = residuals, group = model, fill = model)) +
+  geom_density(adjust = 1.5, alpha = .4) +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 10)
+  ) +
+  labs(x = "Residual", y = "Density", fill = "Model Type")
+
+# Space-time residuals of the local model
+color_palette_on_zero <- rev(colorRampPalette(divergingx_hcl(
+  n = 11, l3 = 0,
+  palette = "RdBu",
+  p3 = 0.8, p4 = 0.6
+), bias = 1.5)(99))
+scatter3D(
+  x = mod_local$newdata$x[-id_no],
+  y = mod_local$newdata$y[-id_no],
+  z = mod_local$newdata$t[-id_no],
+  col = color_palette_on_zero,
+  theta = 60, phi = 35,
+  colvar = residui_local,
+  ticktype = "detailed",
+  xlab = "Northing (Km)", ylab = "Easting (Km)", zlab = "Days from January 1st"
+)
