@@ -32,7 +32,33 @@ Instructions to access the Github Codespace[^1]:
     data-fig-width="70%" />
 3.  Wait for the Codespace to be created. This operation takes
     approximately 5/10 minutes. At the end you should see something
-    like:
+    like: <img src="istruzioni/step2.png" data-fig-align="center"
+    data-fig-width="70%" />
+4.  Click on the `Ports` tab (which is highlighted in the previous
+    image). You will see something like
+    <img src="istruzioni/step3.png" data-fig-align="center"
+    data-fig-width="70%" />
+5.  Drag the mouse over the Forwarded Addresses field in the 8787 port
+    and click on the globe icon (as displayed in the previous image).
+    This will open a new tab in your browser with the Rstudio Server
+    interface. <img src="istruzioni/step4.png" data-fig-align="center"
+    data-fig-width="70%" />
+6.  Login into the Rstudio server using the following credentials:
+    - Username: `rstudio`
+    - Password: `rstudio`
+7.  These operations will create an Rstudio session in your browser. Now
+    you can explore the code and the data interactively!
+
+**Warning:** Please notice that
+
+> GitHub Codespaces is paid for either by an organization, an
+> enterprise, or a personal account. The Free and Pro plans for personal
+> accounts include free use of GitHub Codespaces up to a fixed amount of
+> usage every month.
+
+We refer to the [official
+docs](https://docs.github.com/en/billing/managing-billing-for-your-products/managing-billing-for-github-codespaces/about-billing-for-github-codespaces)
+for more details.
 
 [^1]: Please note that you need a Github account to access the Github
     Codespace.
