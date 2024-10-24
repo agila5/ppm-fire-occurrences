@@ -32,7 +32,7 @@ library(here)
 source(here("R", "packages.R"))
 ```
 
-Download (if necessary) relevant data from the Github Repository
+Download (if necessary) relevant data from the Github Repository. **Warning**: This code might download a lot of data (around 1.5 GB). 
 
 ```{r}
 if (!dir.exists(here("data"))) {
@@ -56,7 +56,7 @@ if (!all(file.exists(data_paths))) {
 rm(data_names, data_paths)
 ```
 
-Download (if necessary) cached results from the Github Repository
+Download (if necessary) cached results from the Github Repository. See the README file for more details. 
 
 ```{r}
 if (!dir.exists(here("qcache"))) {

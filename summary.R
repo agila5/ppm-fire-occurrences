@@ -12,6 +12,7 @@ data_names <- c(
   "environmental-variables.zip", "INGV-elev.zip"
 )
 data_paths <- here("data", data_names)
+# WARNING: The following code chunk might download a lot of data. 
 if (!all(file.exists(data_paths))) {
   pb_download(
     file = data_names,
@@ -33,6 +34,7 @@ qcache_names <- c(
   "slope.qs", "NDVI_tidy.qs", "NDVI_tidy_agg_1month.qs", "NDVI_raw.qs", "NDVI_and_landuse.qs", "land_use_tidy.qs", "land_use_tidy_union.qs", "env_var.qs", "elev.qs", "cov_time.qs"
 )
 qcache_paths <- here("qcache", qcache_names)
+# Download missing cached data from the data-release. See README for more details. 
 if (!all(file.exists(qcache_paths))) {
   pb_download(
     file = qcache_names,
